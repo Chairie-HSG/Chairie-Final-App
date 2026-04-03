@@ -1,4 +1,4 @@
-From datetime import datetime, timedelta
+From datetime import datetime
 
 
 def is_seat_available (check_in_time):
