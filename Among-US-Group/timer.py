@@ -11,4 +11,5 @@ def is_seat_available (check_in_time):
     else:
         return False
     
-
+# linked to Occupied data function in seat_manager.py you should return occupied as true or false 
+# and then save that change into the file.
