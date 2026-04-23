@@ -1,356 +1,439 @@
 """
-streamlit_app.py
+ChairY – Library Seat Reservation System
+New implementation replacing the old streamlit_app.py.
 
-Test UI for the Chairy backend.
-Lets you create seats, check in/out, view seat status, and auto-free expired seats.
+Uses:
+  - supabase_client.py  → database connection
+  - api.py              → all seat / auth business logic
+  - indexnew.html       → design reference (palette, layout, map concept)
+  - Library map images  → Library_Groundfloor.PNG / Library_First_Floor.PNG
 """
 
-import streamlit as st
-import sys
+import base64
 import os
-import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
-# Make sure Python can find seat_manager and timer in the same folder
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "Among-US-Group"))
-from seat_manager import SeatManager
+import streamlit as st
+import streamlit.components.v1 as components
+from streamlit_autorefresh import st_autorefresh
 
-# ── Page config ────────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Chairy – Backend Tester",
-    page_icon="🪑",
-    layout="wide",
+from auth import init_auth_state, login_page, logout_button, is_logged_in, require_login
+from api import (
+    RESERVATION_MINUTES,
+    RECHECK_HOURS,
+    get_seats,
+    get_user_status,
+    reserve_seat,
+    cancel_reservation,
+    check_in_from_qr,
+    release_current_seat,
 )
 
-# ── Custom CSS (designing what the website looks like)──────────────────────────
-st.markdown("""
+# ─────────────────────────────────────────────────────────────────────────────
+# Page config
+# ─────────────────────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="ChairY – HSG Study Spots",
+    page_icon="🪑",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _img_b64(path: str) -> str:
+    """Return a base64 data-URI for an image, or empty string if not found."""
+    p = Path(path)
+    if not p.exists():
+        return ""
+    ext = p.suffix.lower().lstrip(".")
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png"}.get(ext, "image/png")
+    data = base64.b64encode(p.read_bytes()).decode()
+    return f"data:{mime};base64,{data}"
+
+
+def seconds_left(iso_value: str) -> int:
+    if not iso_value:
+        return 0
+    target = datetime.fromisoformat(iso_value)
+    now = datetime.now(timezone.utc)
+    return max(int((target - now).total_seconds()), 0)
+
+
+def countdown(iso_value: str) -> str:
+    secs = seconds_left(iso_value)
+    return f"{secs // 60:02d}:{secs % 60:02d}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global CSS  (mirrors indexnew.html palette and card style)
+# ─────────────────────────────────────────────────────────────────────────────
+GLOBAL_CSS = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;600&display=swap');
+  #MainMenu, footer, header {visibility: hidden;}
+  .block-container {padding-top: 1rem; padding-bottom: 2rem;}
 
-    html, body, [class*="css"] { #makes sure that the design applies for the whole website and anything that gets added
-        font-family: 'DM Sans', sans-serif;
-        background-color: #0f0f0f;
-        color: #f0f0f0;
-    }
-    .stApp { background-color: #0f0f0f; }
+  body, [data-testid="stApp"] {
+    background: #f5f5f5;
+    color: #222;
+    font-family: Arial, sans-serif;
+  }
 
-    h1, h2, h3 { # formatting the headers (titles, section titles, subtitles)
-        font-family: 'Space Mono', monospace; # using Space Mono we imported, or any monospace font
-        color: #f0f0f0;
-    }
+  /* top bar */
+  .chairy-logo {font-size: 28px; font-weight: bold; color: #0a8f4d;}
+  .user-badge {
+    background: #eef5f8; border-radius: 20px;
+    padding: 5px 14px; font-size: 14px; font-weight: 500;
+  }
 
-    .seat-card {
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        border-radius: 10px;
-        padding: 12px; #adds space inside the card
-        text-align: center;
-        font-family: 'Space Mono', monospace;
-        font-size: 12px;
-        transition: all 0.2s; #if status changes, this will make the transition go smoothly
-    }
-    .seat-free   { border-color: #00c896; color: #00c896; }
-    .seat-taken  { border-color: #ff4b6e; color: #ff4b6e; }
+  /* status banners */
+  .banner {
+    border-radius: 10px; padding: 12px 16px;
+    margin-bottom: 12px; font-size: 14px;
+  }
+  .banner-warn {background:#fff3cd; border:1px solid #ffc107; color:#856404;}
+  .banner-ok   {background:#d1e7dd; border:1px solid #0f5132; color:#0f5132;}
 
-    .stat-box {
-        background: #1a1a1a;
-        border: 1px solid #2a2a2a;
-        border-radius: 12px;
-        padding: 20px;
-        text-align: center;
-    }
-    .stat-number {
-        font-family: 'Space Mono', monospace;
-        font-size: 2.5rem;
-        font-weight: 700; #making the numbers bold
-        line-height: 1; #vertical spacing of the numbers
-    }
-    .stat-label {
-        font-size: 0.8rem;
-        color: #888;
-        margin-top: 4px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
+  /* floor summary box */
+  .summary-box {
+    background: white; border: 1px solid #d0d7de;
+    border-radius: 12px; padding: 16px; font-size: 13px; line-height: 2;
+  }
 
-    .success-msg { color: #00c896; font-weight: 600; }
-    .error-msg   { color: #ff4b6e; font-weight: 600; }
-    .info-msg    { color: #7eb8ff; font-weight: 600; }
-
-    div[data-testid="stButton"] > button { #targets streamlit button containers
-        background: #1a1a1a;
-        border: 1px solid #333;
-        color: #f0f0f0;
-        border-radius: 8px;
-        font-family: 'Space Mono', monospace;
-        font-size: 13px;
-        padding: 10px 20px;
-        width: 100%;
-        transition: all 0.2s;
-    }
-    div[data-testid="stButton"] > button:hover {
-        border-color: #00c896;
-        color: #00c896;
-    }
-
-    div[data-testid="stNumberInput"] input,
-    div[data-testid="stTextInput"] input {
-        background: #1a1a1a;
-        border: 1px solid #333;
-        color: #f0f0f0;
-        border-radius: 8px;
-        font-family: 'Space Mono', monospace;
-    }
-
-    .qr-badge {
-        display: inline-block;
-        background: #111;
-        border: 1px solid #333;
-        border-radius: 6px;
-        padding: 4px 10px;
-        font-family: 'Space Mono', monospace;
-        font-size: 12px;
-        color: #aaa;
-        letter-spacing: 2px;
-    }
-
-    hr { border-color: #222; }
-    .section-title {
-        font-family: 'Space Mono', monospace;
-        font-size: 0.7rem;
-        color: #555;
-        text-transform: uppercase;
-        letter-spacing: 3px;
-        margin-bottom: 16px;
-    }
+  /* detail panel */
+  .detail-panel {
+    background: white; border: 1px solid #d0d7de;
+    border-radius: 12px; padding: 18px;
+  }
+  .detail-title {font-size: 20px; font-weight: 700; margin-bottom: 6px;}
+  .status-badge {
+    display: inline-block; border-radius: 20px;
+    padding: 3px 12px; font-size: 12px; font-weight: 600; color: white;
+  }
+  .badge-free     {background: #1db954;}
+  .badge-reserved {background: #ff9800;}
+  .badge-occupied {background: #e53935;}
 </style>
-""", unsafe_allow_html=True)
+"""
 
 
-# ── Session state init ──────────────────────────────────────────────────────────
-if "manager" not in st.session_state:
-    st.session_state.manager = None
-if "log" not in st.session_state:
-    st.session_state.log = []
+# ─────────────────────────────────────────────────────────────────────────────
+# Map HTML  (indexnew.html concept: floor image + floating seat dots)
+# ─────────────────────────────────────────────────────────────────────────────
 
-def log(msg, kind="info"):
-    ts = datetime.datetime.now().strftime("%H:%M:%S")
-    st.session_state.log.insert(0, (ts, msg, kind))
-    if len(st.session_state.log) > 50:
-        st.session_state.log.pop()
+def build_map_html(seats: list, floor: int, selected_id=None) -> str:
+    # pick the best available image for the selected floor
+    if floor == 0:
+        map_src = _img_b64("Library_Groundfloor.PNG") or _img_b64("Library_GFloor.jpg")
+    else:
+        map_src = _img_b64("Library_First_Floor.PNG") or _img_b64("Library_1Floor.jpg")
 
-def get_manager():
-    return st.session_state.manager
+    floor_seats = [s for s in seats if s["floor"] == floor]
+    free_count  = sum(1 for s in floor_seats if s["status"] == "free")
+
+    # build JS array
+    items = []
+    for s in floor_seats:
+        color = {"free": "#1db954", "reserved": "#ff9800", "occupied": "#e53935"}.get(s["status"], "#9ca3af")
+        items.append(
+            f'{{id:{s["id"]},code:"{s["code"]}",status:"{s["status"]}",'
+            f'color:"{color}",rMe:{str(s["reserved_by_me"]).lower()},'
+            f'oMe:{str(s["occupied_by_me"]).lower()}}}'
+        )
+    seats_json = "[" + ",".join(items) + "]"
+    sel_js = str(selected_id) if selected_id else "null"
+    floor_label = "Ground Floor" if floor == 0 else "First Floor"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif;}}
+body{{background:#f5f5f5;padding:8px;}}
+.avail{{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:600;margin-bottom:10px;}}
+.dot{{width:12px;height:12px;border-radius:50%;display:inline-block;}}
+.legend{{display:flex;gap:16px;font-size:13px;margin-bottom:12px;flex-wrap:wrap;}}
+.leg-item{{display:flex;align-items:center;gap:5px;}}
+.map-box{{border:2px solid #1f4c66;border-radius:10px;padding:14px;background:#fafafa;}}
+.map-title{{font-size:16px;font-weight:600;color:#444;margin-bottom:10px;}}
+.wrap{{position:relative;width:100%;}}
+.wrap img{{width:100%;border-radius:8px;display:block;}}
+.sdot{{
+  position:absolute;width:18px;height:18px;border-radius:50%;
+  border:2px solid white;cursor:pointer;
+  transform:translate(-50%,-50%);
+  transition:transform .12s;
+  box-shadow:0 1px 4px rgba(0,0,0,.5);
+}}
+.sdot:hover{{transform:translate(-50%,-50%) scale(1.5);}}
+.sdot.sel{{border:3px solid #1f4c66;transform:translate(-50%,-50%) scale(1.35);}}
+.tip{{
+  position:absolute;background:rgba(0,0,0,.82);color:#fff;
+  padding:5px 9px;border-radius:6px;font-size:11px;
+  pointer-events:none;white-space:nowrap;z-index:99;
+  transform:translate(-50%,-160%);display:none;
+}}
+</style>
+</head>
+<body>
+<div class="avail">
+  <span class="dot" style="background:#1db954;"></span>
+  <span><strong>{free_count}</strong> free seats on this floor</span>
+</div>
+<div class="legend">
+  <span>Legend:</span>
+  <div class="leg-item"><span class="dot" style="background:#1db954;"></span>Free</div>
+  <div class="leg-item"><span class="dot" style="background:#ff9800;"></span>Reserved</div>
+  <div class="leg-item"><span class="dot" style="background:#e53935;"></span>Occupied</div>
+</div>
+<div class="map-box">
+  <div class="map-title">{floor_label}</div>
+  <div class="wrap" id="wrap">
+    <img src="{map_src}" alt="Library Map"/>
+    <div id="tip" class="tip"></div>
+  </div>
+</div>
+<script>
+const seats={seats_json};
+const selId={sel_js};
+
+function autoPos(i,n){{
+  const cols=6;
+  const rows=Math.ceil(n/cols);
+  const c=i%cols, r=Math.floor(i/cols);
+  return {{
+    x:8+c*84/Math.max(cols-1,1),
+    y:10+r*80/Math.max(rows-1,1)
+  }};
+}}
+
+function render(){{
+  const wrap=document.getElementById('wrap');
+  document.querySelectorAll('.sdot').forEach(d=>d.remove());
+  const tip=document.getElementById('tip');
+  seats.forEach((s,i)=>{{
+    const p=autoPos(i,seats.length);
+    const d=document.createElement('div');
+    d.className='sdot'+(s.id===selId?' sel':'');
+    d.style.background=s.color;
+    d.style.left=p.x+'%';
+    d.style.top=p.y+'%';
+    d.addEventListener('mouseenter',()=>{{
+      tip.style.display='block';
+      tip.style.left=p.x+'%';
+      tip.style.top=p.y+'%';
+      let lbl=s.code+' · '+s.status.toUpperCase();
+      if(s.rMe||s.oMe) lbl+=' (you)';
+      tip.textContent=lbl;
+    }});
+    d.addEventListener('mouseleave',()=>{{tip.style.display='none';}});
+    d.addEventListener('click',()=>{{
+      window.parent.postMessage({{type:'seat_click',seatId:s.id}},'*');
+    }});
+    wrap.appendChild(d);
+  }});
+}}
+render();
+</script>
+</body>
+</html>"""
 
 
-# ── Header ──────────────────────────────────────────────────────────────────────
-st.markdown("# 🪑 Chairy")
-st.markdown("<p style='color:#555; font-family:Space Mono; font-size:12px;'>BACKEND TEST INTERFACE</p>", unsafe_allow_html=True)
-st.markdown("---")
+# ─────────────────────────────────────────────────────────────────────────────
+# User status banners
+# ─────────────────────────────────────────────────────────────────────────────
+
+def render_user_banner(token: str):
+    result = get_user_status(token)
+    if not result["success"]:
+        return
+    reserved = result.get("reserved_seat")
+    occupied = result.get("checked_in_seat")
+    if reserved:
+        st.markdown(
+            f'<div class="banner banner-warn">⏳ You reserved <strong>{reserved["code"]}</strong>. '
+            f'Scan QR within <strong>{countdown(reserved.get("reserved_until",""))}</strong>.</div>',
+            unsafe_allow_html=True,
+        )
+    if occupied:
+        st.markdown(
+            f'<div class="banner banner-ok">✅ Checked in at <strong>{occupied["code"]}</strong>. '
+            f'Expires in <strong>{countdown(occupied.get("occupied_until",""))}</strong>.</div>',
+            unsafe_allow_html=True,
+        )
 
 
-# ── Sidebar – Create / Load seats ──────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### ⚙️ Setup")
-    st.markdown("<p class='section-title'>Seat Manager</p>", unsafe_allow_html=True)
+# ─────────────────────────────────────────────────────────────────────────────
+# Seat detail panel
+# ─────────────────────────────────────────────────────────────────────────────
 
-    num_seats = st.number_input("Number of seats", min_value=1, max_value=500, value=20, step=1)
-    state_file = st.text_input("State file", value="seat_state.json")
+def render_detail_panel(token: str, seat):
+    st.markdown("### Seat Details")
+    if not seat:
+        st.info("Select a seat on the map or from the list below.")
+        return
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("🆕 Create"):
-            m = SeatManager(num_seats=num_seats, state_file=state_file)
-            m.create_seats()
-            st.session_state.manager = m
-            log(f"Created {num_seats} seats → {state_file}", "success")
-            st.rerun()
+    badge = {"free": "badge-free", "reserved": "badge-reserved", "occupied": "badge-occupied"}.get(seat["status"], "")
+    st.markdown(f"""
+    <div class="detail-panel">
+      <div class="detail-title">{seat["code"]}</div>
+      <p style="color:#666;font-size:13px;margin:2px 0 8px;">
+        Floor {seat["floor"]} &nbsp;·&nbsp; {seat["building"]}
+      </p>
+      <span class="status-badge {badge}">{seat["status"].upper()}</span>
+    </div>
+    """, unsafe_allow_html=True)
+    st.write("")
 
-    with col2:
-        if st.button("📂 Load"):
-            m = SeatManager(num_seats=num_seats, state_file=state_file)
-            st.session_state.manager = m
-            log(f"Loaded state from {state_file}", "info")
-            st.rerun()
+    status = seat["status"]
 
-    st.markdown("---")
-    st.markdown("### 🕒 Auto-Expire")
-    st.caption("Frees seats whose 2h reservation expired.")
-    if st.button("♻️ Free Expired Seats"):
-        m = get_manager()
-        if m:
-            from timer import free_expired_seats
-            free_expired_seats(m.seats)
-            m.save_state()
-            log("Freed all expired seats", "info")
-            st.rerun()
+    if status == "free":
+        if st.button("🪑 Reserve Seat", use_container_width=True, type="primary"):
+            r = reserve_seat(token, seat["id"])
+            st.success(r["message"]) if r["success"] else st.error(r["message"])
+            if r["success"]:
+                st.rerun()
+
+    elif status == "reserved":
+        if seat["reserved_by_me"]:
+            remaining = countdown(seat.get("reserved_until", ""))
+            st.warning(f"Reserved by you – {remaining} left to check in.")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ Check In", use_container_width=True, type="primary"):
+                    r = check_in_from_qr(token, seat["id"])
+                    st.success(r["message"]) if r["success"] else st.error(r["message"])
+                    if r["success"]:
+                        st.rerun()
+            with c2:
+                if st.button("❌ Cancel", use_container_width=True):
+                    r = cancel_reservation(token)
+                    st.success(r["message"]) if r["success"] else st.error(r["message"])
+                    if r["success"]:
+                        st.rerun()
         else:
-            st.warning("Create or load seats first.")
+            st.warning("Reserved by someone else.")
 
-    st.markdown("---")
-    st.markdown("### 📋 Activity Log")
-    if st.session_state.log:
-        for ts, msg, kind in st.session_state.log[:10]:
-            color = {"success": "#00c896", "error": "#ff4b6e", "info": "#7eb8ff"}.get(kind, "#aaa")
-            st.markdown(f"<span style='color:#555;font-size:10px;'>{ts}</span> <span style='color:{color};font-size:12px;'>{msg}</span>", unsafe_allow_html=True)
+    elif status == "occupied":
+        if seat["occupied_by_me"]:
+            st.success("You are checked in here.")
+            st.info(f"Recheck in: **{countdown(seat.get('occupied_until',''))}**")
+            if st.button("🚪 Release Seat", use_container_width=True):
+                r = release_current_seat(token)
+                st.success(r["message"]) if r["success"] else st.error(r["message"])
+                if r["success"]:
+                    st.rerun()
+        else:
+            st.error("Occupied by someone else.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main app
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main_app():
+    require_login()
+    st_autorefresh(interval=5000, key="refresh")
+    st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+
+    token    = st.session_state["token"]
+    username = st.session_state.get("username", "")
+
+    # ── top bar ──────────────────────────────────────────────────────────────
+    col_logo, col_floor, col_user = st.columns([3, 2, 2])
+    with col_logo:
+        st.markdown('<div class="chairy-logo">🪑 ChairY</div>', unsafe_allow_html=True)
+        st.caption("HSG Library – Study Seat Booking")
+    with col_floor:
+        floor = st.selectbox(
+            "Floor",
+            options=[0, 1],
+            format_func=lambda x: "Ground Floor" if x == 0 else "First Floor",
+            key="selected_floor",
+            label_visibility="collapsed",
+        )
+    with col_user:
+        st.markdown(
+            f'<div class="user-badge" style="text-align:right;margin-top:4px;">👤 {username}</div>',
+            unsafe_allow_html=True,
+        )
+        logout_button()
+
+    st.markdown('<hr style="border:1px solid #2b6f95;margin:8px 0 16px;"/>', unsafe_allow_html=True)
+
+    # ── user status banners ──────────────────────────────────────────────────
+    render_user_banner(token)
+
+    # ── fetch seats ──────────────────────────────────────────────────────────
+    seats_result = get_seats(token)
+    if not seats_result["success"]:
+        st.error(f"Could not load seats: {seats_result['message']}")
+        return
+    seats = seats_result["seats"]
+
+    selected_id   = st.session_state.get("selected_seat_id")
+    selected_seat = next((s for s in seats if s["id"] == selected_id), None)
+
+    # ── two-column layout: map + detail ──────────────────────────────────────
+    map_col, detail_col = st.columns([3, 1])
+
+    with map_col:
+        map_html = build_map_html(seats, floor, selected_id)
+        components.html(map_html, height=540, scrolling=False)
+
+        # ── compact seat list below the map ──────────────────────────────────
+        st.markdown("#### Select a seat")
+        floor_seats = [s for s in seats if s["floor"] == floor]
+        n_cols = 6
+        for chunk_start in range(0, len(floor_seats), n_cols):
+            row_seats = floor_seats[chunk_start:chunk_start + n_cols]
+            cols = st.columns(n_cols)
+            for col, seat in zip(cols, row_seats):
+                with col:
+                    emoji = {"free": "🟢", "reserved": "🟠", "occupied": "🔴"}.get(seat["status"], "⚪")
+                    is_sel = seat["id"] == selected_id
+                    btn_type = "primary" if is_sel else "secondary"
+                    if st.button(f"{emoji} {seat['code']}", key=f"b_{seat['id']}",
+                                 use_container_width=True, type=btn_type):
+                        st.session_state["selected_seat_id"] = seat["id"]
+                        st.rerun()
+
+    with detail_col:
+        render_detail_panel(token, selected_seat)
+
+        # ── floor summary ─────────────────────────────────────────────────────
+        st.markdown("---")
+        fl_seats = [s for s in seats if s["floor"] == floor]
+        free_n   = sum(1 for s in fl_seats if s["status"] == "free")
+        res_n    = sum(1 for s in fl_seats if s["status"] == "reserved")
+        occ_n    = sum(1 for s in fl_seats if s["status"] == "occupied")
+        st.markdown(f"""
+        <div class="summary-box">
+          <strong>Floor Summary</strong><br>
+          🟢 Free: <strong>{free_n}</strong><br>
+          🟠 Reserved: <strong>{res_n}</strong><br>
+          🔴 Occupied: <strong>{occ_n}</strong><br>
+          📊 Total: <strong>{len(fl_seats)}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    init_auth_state()
+    if is_logged_in():
+        main_app()
     else:
-        st.caption("No activity yet.")
+        st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+        login_page()
 
 
-# ── Main area ───────────────────────────────────────────────────────────────────
-m = get_manager()
-
-if m is None:
-    st.info("👈 Use the sidebar to **Create** or **Load** seats to get started.")
-    st.stop()
-
-
-# ── Stats row ───────────────────────────────────────────────────────────────────
-total    = len(m.seats)
-occupied = sum(1 for s in m.seats if s["occupied"])
-free     = total - occupied
-pct      = int((occupied / total) * 100) if total else 0
-
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.markdown(f"""<div class='stat-box'>
-        <div class='stat-number' style='color:#7eb8ff'>{total}</div>
-        <div class='stat-label'>Total Seats</div>
-    </div>""", unsafe_allow_html=True)
-with c2:
-    st.markdown(f"""<div class='stat-box'>
-        <div class='stat-number' style='color:#00c896'>{free}</div>
-        <div class='stat-label'>Available</div>
-    </div>""", unsafe_allow_html=True)
-with c3:
-    st.markdown(f"""<div class='stat-box'>
-        <div class='stat-number' style='color:#ff4b6e'>{occupied}</div>
-        <div class='stat-label'>Occupied</div>
-    </div>""", unsafe_allow_html=True)
-with c4:
-    st.markdown(f"""<div class='stat-box'>
-        <div class='stat-number' style='color:#f0c040'>{pct}%</div>
-        <div class='stat-label'>Occupancy</div>
-    </div>""", unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ── Tabs ────────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["🗺️ Seat Map", "✅ Check In / Out", "🔍 Seat Details"])
-
-
-# ── Tab 1: Seat Map ─────────────────────────────────────────────────────────────
-with tab1:
-    st.markdown("<p class='section-title'>Live Seat Map</p>", unsafe_allow_html=True)
-    st.caption("🟢 Available  🔴 Occupied")
-
-    cols_per_row = st.slider("Columns", min_value=5, max_value=20, value=10)
-    cols = st.columns(cols_per_row)
-
-    for i, seat in enumerate(m.seats):
-        col = cols[i % cols_per_row]
-        with col:
-            status_class = "seat-taken" if seat["occupied"] else "seat-free"
-            icon = "🔴" if seat["occupied"] else "🟢"
-            st.markdown(f"""
-                <div class='seat-card {status_class}'>
-                    {icon}<br><b>#{seat['id']}</b>
-                </div><br>
-            """, unsafe_allow_html=True)
-
-
-# ── Tab 2: Check In / Out ───────────────────────────────────────────────────────
-with tab2:
-    left, right = st.columns(2)
-
-    with left:
-        st.markdown("### ✅ Check In")
-        st.caption("Enter a QR code to occupy a seat.")
-        qr_in = st.text_input("QR Code", key="qr_in", placeholder="e.g. AB12CD34").upper()
-        if st.button("Check In", key="btn_in"):
-            if qr_in:
-                success, msg = m.check_in(qr_in)
-                if success:
-                    log(f"Check-in: {qr_in} – {msg}", "success")
-                    st.success(msg)
-                else:
-                    log(f"Check-in FAILED: {qr_in} – {msg}", "error")
-                    st.error(msg)
-                st.rerun()
-            else:
-                st.warning("Enter a QR code.")
-
-    with right:
-        st.markdown("### 🚪 Check Out")
-        st.caption("Enter a QR code to free a seat.")
-        qr_out = st.text_input("QR Code", key="qr_out", placeholder="e.g. AB12CD34").upper()
-        if st.button("Check Out", key="btn_out"):
-            if qr_out:
-                success, msg = m.check_out(qr_out)
-                if success:
-                    log(f"Check-out: {qr_out} – {msg}", "success")
-                    st.success(msg)
-                else:
-                    log(f"Check-out FAILED: {qr_out} – {msg}", "error")
-                    st.error(msg)
-                st.rerun()
-            else:
-                st.warning("Enter a QR code.")
-
-    st.markdown("---")
-    st.markdown("### 🎲 Quick Test — Use a Real QR Code")
-    st.caption("Pick any seat below to copy its QR code for testing.")
-
-    # Show all QR codes in a table
-    search = st.text_input("Filter by seat ID or QR", placeholder="Search...").upper()
-    filtered = [s for s in m.seats if search in str(s["id"]) or search in s["qr_code"]] if search else m.seats
-
-    header = st.columns([1, 3, 2])
-    header[0].markdown("**Seat**")
-    header[1].markdown("**QR Code**")
-    header[2].markdown("**Status**")
-
-    for seat in filtered[:30]:
-        row = st.columns([1, 3, 2])
-        row[0].write(f"#{seat['id']}")
-        row[1].code(seat['qr_code'])
-        status = "🔴 Occupied" if seat["occupied"] else "🟢 Free"
-        row[2].write(status)
-        if seat["occupied"] and seat.get("check_in_time"):
-            checked_in = datetime.datetime.fromisoformat(seat["check_in_time"])
-            elapsed = datetime.datetime.now() - checked_in
-            mins = int(elapsed.total_seconds() // 60)
-            row[2].caption(f"{mins}m ago")
-
-    if len(filtered) > 30:
-        st.caption(f"Showing 30 of {len(filtered)} results.")
-
-
-# ── Tab 3: Seat Details ──────────────────────────────────────────────────────────
-with tab3:
-    st.markdown("### 🔍 Look Up a Seat")
-    seat_id = st.number_input("Seat ID", min_value=1, max_value=total, value=1, step=1)
-
-    match = next((s for s in m.seats if s["id"] == seat_id), None)
-    if match:
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.markdown(f"**Seat ID:** `{match['id']}`")
-            st.markdown(f"**QR Code:** `{match['qr_code']}`")
-            status = "🔴 Occupied" if match["occupied"] else "🟢 Available"
-            st.markdown(f"**Status:** {status}")
-        with col_b:
-            if match["occupied"] and match.get("check_in_time"):
-                checked_in = datetime.datetime.fromisoformat(match["check_in_time"])
-                elapsed = datetime.datetime.now() - checked_in
-                remaining = datetime.timedelta(hours=2) - elapsed
-                mins_elapsed = int(elapsed.total_seconds() // 60)
-                mins_remaining = max(0, int(remaining.total_seconds() // 60))
-                st.markdown(f"**Checked in:** `{checked_in.strftime('%H:%M:%S')}`")
-                st.markdown(f"**Elapsed:** `{mins_elapsed} min`")
-                st.markdown(f"**Expires in:** `{mins_remaining} min`")
-                progress = min(1.0, elapsed.total_seconds() / 7200)
-                st.progress(progress, text="2h reservation")
-            else:
-                st.markdown("_Seat is not currently occupied._")
-    else:
-        st.warning("Seat not found.")
+if __name__ == "__main__":
+    main()
