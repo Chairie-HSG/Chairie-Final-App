@@ -629,9 +629,10 @@ def main_app():
     )
 
     # ── Map box with library floor plan image (indexnew.html map-box) ──
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     img_map = {
-        "Ground Floor": "Library_GFloor.jpg",
-        "Floor 1": "Library_1Floor.jpg",
+        "Ground Floor": os.path.join(BASE_DIR, "Library_GFloor.jpg"),
+        "Floor 1": os.path.join(BASE_DIR, "Library_1Floor.jpg"),
     }
     img_file = img_map[floor_choice]
 
