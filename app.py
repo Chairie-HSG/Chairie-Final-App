@@ -1,10 +1,10 @@
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone  #Imports tools for date/time and streamlit
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-from auth import init_auth_state, login_page, logout_button, is_logged_in, require_login
-from api import (
+from auth import init_auth_state, login_page, logout_button, is_logged_in, require_login  #Imports login data from auth.py
+from api import (  #Imports Seat data from api.py
     RESERVATION_MINUTES,
     RECHECK_HOURS,
     get_seats,
@@ -19,19 +19,19 @@ st.set_page_config(page_title="ChairY", layout="wide")
 
 
 def seconds_left(iso_value):
-    if not iso_value: #check if time is left
+    if not iso_value: #check if time is left from expiry
         return 0
-    target = datetime.fromisoformat(iso_value)
+    target = datetime.fromisoformat(iso_value) 
     now = datetime.now(timezone.utc)  #current time
     diff = int((target - now).total_seconds())
     return max(diff, 0) #returns the difference between the time the reservation is over, and shows 0 if its negative.
 
 
-def countdown(iso_value):
+def countdown(iso_value):  #Time formatting
     secs = seconds_left(iso_value)
     minutes = secs // 60
     seconds = secs % 60
-    return f"{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}" 
 
 
 def seat_status_color(status): # Colors the seat depending on condition
@@ -43,25 +43,25 @@ def seat_status_color(status): # Colors the seat depending on condition
     return colors.get(status, "#9ca3af")
 
 
-def render_top_bar():
+def render_top_bar():  
     col1, col2 = st.columns([4, 1])
     with col1:
         st.title("Chairi")
-        st.caption("Chai Demo")
+        st.caption("Chari Demo")
     with col2:
         st.write("")
         st.write(f"Logged in as: **{st.session_state['username']}**")
         logout_button()
 
 
-def render_user_status(token):
+def render_user_status(token): #Checks with api.py of user status
     result = get_user_status(token)
     if not result["success"]:
         st.error(result["message"])
         return   #error check
 
     reserved_seat = result["reserved_seat"]
-    checked_in_seat = result["checked_in_seat"] #state of the seats
+    checked_in_seat = result["checked_in_seat"] #User seat status
 
     if reserved_seat:
         st.warning(
@@ -83,21 +83,21 @@ def render_user_status(token):
 
 
 def render_seat_grid(token):
-    seats_result = get_seats(token)
+    seats_result = get_seats(token) #get all seats from the database
     if not seats_result["success"]:
         st.error(seats_result["message"])
         return [] #error check
 
-    seats = seats_result["seats"] 
+    seats = seats_result["seats"] #List of seats
 
     st.subheader("Available Seats")
 
     cols_per_row = 4
-    for i in range(0, len(seats), cols_per_row):
+    for i in range(0, len(seats), cols_per_row):   
         row = seats[i:i + cols_per_row]
         cols = st.columns(cols_per_row)
 
-        for col, seat in zip(cols, row):
+        for col, seat in zip(cols, row):     #display 1 seat per column
             with col:
                 color = seat_status_color(seat["status"])
                 owner_note = ""
@@ -124,10 +124,10 @@ def render_seat_grid(token):
                         </p>
                         
                     </div>
-                    """,
+                    """,   #HTML visual of the seats
                     unsafe_allow_html=True
                 )
-
+                 # When user clicks Select, store the chosen seat in session_state.
                 if st.button(f"Select {seat['code']}", key=f"select_{seat['id']}"):
                     st.session_state["selected_seat_id"] = seat["id"]
 
@@ -137,25 +137,25 @@ def render_seat_grid(token):
 def render_seat_details(token, seats):
     st.subheader("Seat Details")
 
-    selected_id = st.session_state.get("selected_seat_id")
+    selected_id = st.session_state.get("selected_seat_id") #Reads which is the selected seat
     if not selected_id:
         st.info("Select a seat to see its details.")
         return
 
-    seat = next((s for s in seats if s["id"] == selected_id), None)
+    seat = next((s for s in seats if s["id"] == selected_id), None) #Finds it in the seat list
     if not seat:
         st.warning("Selected seat not found.")
         return
-
+    #display seat info
     st.write(f"**Seat:** {seat['code']}")
     st.write(f"**Building:** {seat['building']}")
     st.write(f"**Floor:** {seat['floor']}")
     st.write(f"**Status:** {seat['status'].title()}")
 
-    if seat["status"] == "free":
+    if seat["status"] == "free": #Check status -> if free can reserve
         st.success("This seat is free.")
         if st.button("Reserve this seat", key=f"reserve_{seat['id']}"):
-            result = reserve_seat(token, seat["id"])
+            result = reserve_seat(token, seat["id"]) 
             if result["success"]:
                 st.success(result["message"])
                 st.info("You must scan the QR code within 10 minutes.")
@@ -163,7 +163,7 @@ def render_seat_details(token, seats):
             else:
                 st.error(result["message"])
 
-    elif seat["status"] == "reserved":
+    elif seat["status"] == "reserved": #Check status -> if reserved can't reserve
         if seat["reserved_by_me"]:
             st.warning("This seat is reserved by you.")
             st.info(f"Time left to scan QR: {countdown(seat['reserved_until'])}")
@@ -180,7 +180,7 @@ def render_seat_details(token, seats):
                         st.error(result["message"])
 
             with col2:
-                if st.button("Cancel Reservation", key=f"cancel_{seat['id']}"):
+                if st.button("Cancel Reservation", key=f"cancel_{seat['id']}"): #cancel button
                     result = cancel_reservation(token)
                     if result["success"]:
                         st.success(result["message"])
@@ -209,18 +209,18 @@ def render_seat_details(token, seats):
             st.error("This seat is already occupied.")
 
 
-def main_app():
+def main_app(): #Blocks access if user not logged in
     require_login()
 
     # Auto-refresh every second so countdowns update
     st_autorefresh(interval=1000, key="seat_refresh")
 
-    token = st.session_state["token"]
+    token = st.session_state["token"] #get user token from session_state
 
     render_top_bar()
     render_user_status(token)
 
-    left, right = st.columns([2, 1])
+    left, right = st.columns([2, 1]) #split page into 2 for visual appeal 
 
     with left:
         seats = render_seat_grid(token)
@@ -229,16 +229,16 @@ def main_app():
         render_seat_details(token, seats)
 
 
-def main():
+def main(): 
     init_auth_state()
 
-    if is_logged_in():
+    if is_logged_in(): #check login
         main_app()
     else:
         login_page()
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     main()
 
     
