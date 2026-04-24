@@ -13,12 +13,8 @@ def _to_iso(dt): #format time
     return dt.isoformat()
 
 
-def _user_from_token(token):
-    """
-    Uses the real Supabase access token to get the current logged-in user.
-    Returns the user object, or None if token is invalid / missing.
-    """
-    if not token:
+def _user_from_token(token): #identify user from supabase token
+    if not token: 
         return None #Error check
 
     try:
@@ -29,30 +25,25 @@ def _user_from_token(token):
 
 
 def _email_from_token(token):
-    """
-    Extracts the logged-in user's email from the real Supabase token.
-    """
-    user = _user_from_token(token)
+       
+    user = _user_from_token(token) #get the email from the supabase token
     if not user:
         return None
     return user.email
 
 
 def login_request(email, password):
-    """
-    Real login using Supabase Auth.
-    Expects email + password.
-    """
+       #Supabase auth does the login
     try:
         response = supabase.auth.sign_in_with_password({
             "email": email,
             "password": password
         })
 
-        if response.user and response.session:
+        if response.user and response.session: #we can only move on if we bot hare true
             return {
                 "success": True,
-                "username": response.user.email,   # keep key name same so app/auth need minimal changes
+                "username": response.user.email,   
                 "token": response.session.access_token
             }
 
@@ -78,8 +69,9 @@ def _expire_seats():
         .eq("status", "reserved")
         .not_.is_("reserved_until", "null")
         .execute()
-    ) #defines reserved seats as seats with the reserved status whose time hasn't expired (reached 0)
-
+    ) 
+    
+    # Find all seats that are currently reserved and have an expiration time.
     for seat in reserved.data:
         if seat["reserved_until"] and seat["reserved_until"] <= now_iso:
             (
@@ -151,9 +143,7 @@ def get_seats(token=None):
 
 
 def get_user_status(token=None):
-    """
-    Returns the currently logged-in user's active reservation / occupied seat.
-    """
+
     try:
         _expire_seats()
         email = _email_from_token(token)
@@ -228,9 +218,7 @@ def get_user_status(token=None):
 
 
 def reserve_seat(token, seat_id):
-    """
-    Reserve a free seat for 10 minutes.
-    """
+  
     try:
         _expire_seats()
         email = _email_from_token(token)
@@ -311,9 +299,7 @@ def reserve_seat(token, seat_id):
 
 
 def cancel_reservation(token):
-    """
-    Cancel the logged-in user's active reservation.
-    """
+    
     try:
         email = _email_from_token(token)
         if not email:
@@ -351,9 +337,7 @@ def cancel_reservation(token):
 
 
 def check_in_from_qr(token, seat_id):
-    """
-    Converts a reservation into an occupied seat, or directly occupies a free seat.
-    """
+  
     try:
         _expire_seats()
         email = _email_from_token(token)
@@ -418,14 +402,13 @@ def check_in_from_qr(token, seat_id):
 
 
 def release_current_seat(token):
-    """
-    Releases the logged-in user's occupied seat, or cancels their reservation.
-    """
+    # Releases the user's current occupied seat.
+    # If the user only has a reservation, it cancels that reservation instead.
     try:
         email = _email_from_token(token)
         if not email:
             return {"success": False, "message": "Unauthorized"}
-
+        # First check whether the user is occupying a seat.
         occupied = (
             supabase.table("seats")
             .select("*")
@@ -449,7 +432,7 @@ def release_current_seat(token):
             )
 
             return {"success": True, "message": "Seat released."}
-
+        # If no occupied seat exists, check if the user has a reservation.
         reserved = (
             supabase.table("seats")
             .select("*")
@@ -459,9 +442,9 @@ def release_current_seat(token):
             .execute()
         )
 
-        if reserved.data:
+        if reserved.data: 
             seat_id = reserved.data[0]["id"]
-            (
+            (  #Cancel reservation by freeing seat
                 supabase.table("seats")
                 .update({
                     "status": "free",
@@ -480,9 +463,7 @@ def release_current_seat(token):
         return {"success": False, "message": str(e)}
     
 def signup_request(email, password):
-    """
-    This creates a new user in Supabase Auth.
-    """
+        #Create a new user with supabase + email confirmation (here deactivated)
     try:
         response = supabase.auth.sign_up({
             "email": email,
