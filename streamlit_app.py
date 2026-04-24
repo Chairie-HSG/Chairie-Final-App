@@ -521,7 +521,7 @@ def main_app():
     require_login()
 
     # Auto-refresh every second (countdowns update live — from app.py)
-    st_autorefresh(interval=1000, key="seat_refresh")
+    st_autorefresh(interval=30000, key="seat_refresh")
 
     token = st.session_state["token"]
 
