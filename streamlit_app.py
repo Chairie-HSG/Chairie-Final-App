@@ -445,21 +445,97 @@ def login_page():
     # ── Top bar (indexnew.html design) ──
     st.markdown(
         """
-        <div style="display:flex; justify-content:space-between; align-items:center;
-                    padding-bottom:18px; border-bottom:2px solid #2b6f95; margin-bottom:24px;">
-          <div style="font-size:28px; font-weight:bold; color:#0a8f4d;">HSG</div>
-          <div style="font-size:16px; font-weight:500; color:#333;">HSG Study Spots</div>
-        </div>
+        <style>
+        .login-wrapper{
+            display: flex;
+            justify-content:center;
+            align-items: center;
+            min-height: 75vh;
+        }
+
+        .login-card{
+            width: 430px;
+            padding: 42px 44px;
+            border: 1px solid #dadce0;
+            border-radius: 12px;
+            background: white;
+            box-shadow: 0 2px 8px rgba (0, 0, 0, 0.04);
+            margin: auto;
+        }
+
+        .app-logo {
+            width: 110px;
+            margin-bottom: 18px;
+        }
+
+        .login-title{
+            font-size: 28px;
+            font-weight: 500;
+            color: #202124;
+            margin-bottom: 8px;
+        }
+
+        .login-subtitle {
+            font-size: 16px;
+            color: #202124;
+            margin-bottom: 28px;
+        }
+
+        .stTextInput input {
+            height: 52px;
+            border-radius: 4px;
+            border: 1px solid #dadce0;
+            font-size: 15px;
+        }
+
+        .stTextInput input:focus {
+            border: 2px solid #1a73e8;
+        }
+
+        .stButton button {
+            border-radius: 5px;
+            height: 42px;
+            font-weight: 500;
+        }
+
+        .stFormSubmitButton button {
+            background-color: #1a73e8
+            color: white;
+            border-radius: 5px;
+            height: 42px;
+            font-weight: 500;
+            float: right;
+            padding: 0 24px;
+        }
+
+        .stFormSubmitButton button:hover {
+            background-color: #1765cc;
+            color: white;
+        }
+        </style>
         """,
         unsafe_allow_html=True,
     )
 
+    st.markdown('<div class="login-wrapper"><div class="login-card">', unsafe_allow_html=True)
+
+#put logo
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+logo_path = os.path.join(BASE_DIR, "full_size_logo.png")
+
+if os.path.exists(logo_path):
+    st.image(logo_path, width=110)
+else:
     st.markdown(
-        "<div style='font-size:18px; margin-bottom:20px; color:#333;'>Seat Booking System</div>",
+        "<div style='font-size:32px; font-weight:bold; color:#0a8f4d; margin-bottom:18px; '>HSG</div>",
         unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns(2)
+st.markdown('div class="login-title">Login</div>', unsafe_allow_html=True)
+st.markdown('<div class="login-subtitle">Seat Booking System</div>' unsafe_allow_html=True)
+
+col1, col2 = st.columns(2)
+
     with col1:
         if st.button("Login", use_container_width=True):
             st.session_state["auth_mode"] = "login"
@@ -472,7 +548,6 @@ def login_page():
     mode = st.session_state.get("auth_mode", "login")
 
     if mode == "login":
-        st.subheader("Login")
         with st.form("login_form"):
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
@@ -489,7 +564,6 @@ def login_page():
             else:
                 st.error(result["message"])
     else:
-        st.subheader("Sign Up")
         with st.form("signup_form"):
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
@@ -513,6 +587,7 @@ def login_page():
             else:
                 st.error(result["message"])
 
+st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # MAIN APP  (combined indexnew.html layout + app.py logic)
