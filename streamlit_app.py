@@ -531,61 +531,61 @@ else:
         unsafe_allow_html=True,
     )
 
-st.markdown('div class="login-title">Login</div>', unsafe_allow_html=True)
-st.markdown('<div class="login-subtitle">Seat Booking System</div>' unsafe_allow_html=True)
+st.markdown('<div class="login-title">Login</div>', unsafe_allow_html=True)
+st.markdown('<div class="login-subtitle">Seat Booking System</div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 
-    with col1:
-        if st.button("Login", use_container_width=True):
+with col1:
+    if st.button("Login", use_container_width=True):
+        st.session_state["auth_mode"] = "login"
+        st.rerun()
+with col2:
+    if st.button("Sign Up", use_container_width=True):
+        st.session_state["auth_mode"] = "signup"
+        st.rerun()
+
+mode = st.session_state.get("auth_mode", "login")
+
+if mode == "login":
+    with st.form("login_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+    if submitted:
+        if not email or not password:
+            st.warning("Please enter both email and password.")
+            st.stop()
+        result = login_request(email, password)
+        if result["success"]:
+            login_user(result["username"], result["token"])
+            st.success("Login successful.")
+            st.rerun()
+        else:
+            st.error(result["message"])
+else:
+    with st.form("signup_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Password", type="password")
+        confirm = st.text_input("Confirm Password", type="password")
+        submitted = st.form_submit_button("Create Account")
+    if submitted:
+        if not email or not password or not confirm:
+            st.warning("Please fill in all fields.")
+            st.stop()
+        if password != confirm:
+            st.warning("Passwords do not match.")
+            st.stop()
+        if len(password) < 6:
+            st.warning("Password must be at least 6 characters.")
+            st.stop()
+        result = signup_request(email, password)
+        if result["success"]:
+            st.success(result["message"])
+            st.info("Go back to Login and sign in with your new account.")
             st.session_state["auth_mode"] = "login"
-            st.rerun()
-    with col2:
-        if st.button("Sign Up", use_container_width=True):
-            st.session_state["auth_mode"] = "signup"
-            st.rerun()
-
-    mode = st.session_state.get("auth_mode", "login")
-
-    if mode == "login":
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login")
-        if submitted:
-            if not email or not password:
-                st.warning("Please enter both email and password.")
-                return
-            result = login_request(email, password)
-            if result["success"]:
-                login_user(result["username"], result["token"])
-                st.success("Login successful.")
-                st.rerun()
-            else:
-                st.error(result["message"])
-    else:
-        with st.form("signup_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            confirm = st.text_input("Confirm Password", type="password")
-            submitted = st.form_submit_button("Create Account")
-        if submitted:
-            if not email or not password or not confirm:
-                st.warning("Please fill in all fields.")
-                return
-            if password != confirm:
-                st.warning("Passwords do not match.")
-                return
-            if len(password) < 6:
-                st.warning("Password must be at least 6 characters.")
-                return
-            result = signup_request(email, password)
-            if result["success"]:
-                st.success(result["message"])
-                st.info("Go back to Login and sign in with your new account.")
-                st.session_state["auth_mode"] = "login"
-            else:
-                st.error(result["message"])
+        else:
+            st.error(result["message"])
 
 st.markdown("</div></div>", unsafe_allow_html=True)
 
