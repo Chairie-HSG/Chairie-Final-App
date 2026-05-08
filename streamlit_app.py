@@ -456,41 +456,19 @@ def login_page():
         footer {visibility: hidden;}
         header {visibility: hidden;}
 
-        /* Page background — Google uses a very light grey */
+        /* Page background */
         .stApp {
             background-color: #ffffff;
         }
 
-        /* Center the card vertically and horizontally */
+        /* Center column width */
         .block-container {
             padding-top: 3rem;
             padding-bottom: 3rem;
             max-width: 500px;
         }
 
-        /* The login card itself */
-        .login-card {
-            border: 1px solid #dadce0;
-            border-radius: 8px;
-            background: #ffffff;
-            padding: 48px 40px 36px 40px;
-            margin: 0 auto;
-        }
-
-        /* Logo / brand block */
-        .brand {
-            text-align: center;
-            margin-bottom: 16px;
-        }
-        .brand-text {
-            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
-            font-size: 26px;
-            font-weight: 500;
-            color: #0a8f4d;
-            letter-spacing: 0.5px;
-        }
-
-        /* Title and subtitle (Google: "Sign in" + "Use your Google Account") */
+        /* Title and subtitle */
         .login-title {
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 24px;
@@ -506,16 +484,24 @@ def login_page():
             font-weight: 400;
             color: #202124;
             text-align: center;
-            margin-bottom: 32px;
+            margin-bottom: 28px;
+        }
+
+        /* The form itself acts as the card */
+        div[data-testid="stForm"] {
+            border: 1px solid #dadce0;
+            border-radius: 8px;
+            padding: 32px 36px 28px 36px;
+            background: #ffffff;
         }
 
         /* Inputs — Google's outlined style */
         .stTextInput > div > div > input {
-            height: 56px !important;
+            height: 52px !important;
             border-radius: 4px !important;
             border: 1px solid #dadce0 !important;
-            font-size: 16px !important;
-            padding: 13px 15px !important;
+            font-size: 15px !important;
+            padding: 12px 15px !important;
             color: #202124 !important;
         }
         .stTextInput > div > div > input:focus {
@@ -529,58 +515,28 @@ def login_page():
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif !important;
         }
 
-        /* "Forgot email?" / helper link style */
-        .helper-link {
+        /* Tagline (replaces the guest-mode block) */
+        .tagline {
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 14px;
-            font-weight: 500;
-            color: #1a73e8;
-            margin-top: 4px;
-            margin-bottom: 24px;
-            cursor: pointer;
-        }
-
-        /* Guest-mode info text */
-        .guest-info {
-            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
-            font-size: 14px;
-            color: #202124;
+            color: #5f6368;
             line-height: 1.5;
-            margin-top: 24px;
-            margin-bottom: 32px;
+            margin-top: 20px;
+            margin-bottom: 8px;
+            text-align: left;
         }
-        .guest-info a {
-            color: #1a73e8;
-            text-decoration: none;
+        .tagline strong {
+            color: #202124;
             font-weight: 500;
         }
 
-        /* Bottom row: "Create account" (text link) + "Next" (filled button) */
-        /* Style the secondary button (Create account) */
-        div[data-testid="column"]:nth-of-type(1) .stButton button {
-            background: transparent !important;
-            color: #1a73e8 !important;
-            border: none !important;
-            font-weight: 500 !important;
-            font-size: 14px !important;
-            box-shadow: none !important;
-            padding: 0 !important;
-            height: 36px !important;
-            text-align: left !important;
-            justify-content: flex-start !important;
-        }
-        div[data-testid="column"]:nth-of-type(1) .stButton button:hover {
-            background: rgba(26, 115, 232, 0.04) !important;
-            color: #1a73e8 !important;
-        }
-
-        /* Style the primary submit button (Next) */
+        /* Primary submit button (Next) */
         .stFormSubmitButton button {
             background-color: #1a73e8 !important;
             color: #ffffff !important;
             border: none !important;
             border-radius: 4px !important;
-            height: 36px !important;
+            height: 38px !important;
             font-weight: 500 !important;
             font-size: 14px !important;
             padding: 0 24px !important;
@@ -593,14 +549,30 @@ def login_page():
             box-shadow: 0 1px 2px rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15) !important;
         }
 
-        /* Footer (language + Help/Privacy/Terms) */
+        /* Secondary mode-switch button (Create account / Sign in instead) */
+        .switch-row .stButton button {
+            background: #ffffff !important;
+            color: #202124 !important;
+            border: 1px solid #dadce0 !important;
+            border-radius: 4px !important;
+            font-weight: 500 !important;
+            font-size: 14px !important;
+            height: 38px !important;
+            padding: 0 16px !important;
+        }
+        .switch-row .stButton button:hover {
+            background: #f8f9fa !important;
+            border-color: #d2d5d9 !important;
+        }
+
+        /* Footer */
         .login-footer {
             display: flex;
             justify-content: space-between;
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 12px;
             color: #5f6368;
-            margin-top: 24px;
+            margin-top: 32px;
             padding: 0 8px;
         }
         .login-footer a {
@@ -613,28 +585,25 @@ def login_page():
         unsafe_allow_html=True,
     )
 
-    # ── Card opens ──
-    st.markdown('<div class="login-card">', unsafe_allow_html=True)
-
-    # ── Logo (image if available, else text fallback) ──
+    # ── Logo (centered, no outer wrapper card) ──
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     logo_path = os.path.join(BASE_DIR, "full_size_logo.png")
 
     if os.path.exists(logo_path):
-        # Center the logo using columns
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
             st.image(logo_path, width=110)
     else:
         st.markdown(
-            '<div class="brand"><span class="brand-text">HSG</span></div>',
+            "<div style='text-align:center; font-size:32px; font-weight:600; "
+            "color:#0a8f4d; margin-bottom:8px;'>Chairie</div>",
             unsafe_allow_html=True,
         )
 
     # ── Mode state ──
     mode = st.session_state.get("auth_mode", "login")
 
-    # ── Title / subtitle (changes by mode) ──
+    # ── Title / subtitle ──
     if mode == "login":
         st.markdown('<div class="login-title">Sign in</div>', unsafe_allow_html=True)
         st.markdown(
@@ -651,30 +620,24 @@ def login_page():
     # ── Forms ──
     if mode == "login":
         with st.form("login_form", clear_on_submit=False):
-            email = st.text_input("Email", placeholder="", key="login_email")
+            email = st.text_input("Email", key="login_email")
             password = st.text_input("Password", type="password", key="login_password")
 
             st.markdown(
-                '<div class="guest-info">'
-                "Not your computer? Use Guest mode to sign in privately. "
-                '<a href="#">Learn more about using Guest mode</a>'
+                '<div class="tagline">'
+                "<strong>Chairie</strong>, Made by Students, for Students."
                 "</div>",
                 unsafe_allow_html=True,
             )
 
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                # "Create account" as a left-aligned text link button (outside form for routing)
-                pass
-            with col2:
-                submitted = st.form_submit_button("Next")
+            submitted = st.form_submit_button("Next")
 
-        # Switch-mode button rendered outside the form so it can rerun
-        switch_col1, switch_col2 = st.columns([1, 1])
-        with switch_col1:
-            if st.button("Create account", key="go_signup"):
-                st.session_state["auth_mode"] = "signup"
-                st.rerun()
+        # Switch-mode button rendered outside the form
+        st.markdown('<div class="switch-row">', unsafe_allow_html=True)
+        if st.button("Create account", key="go_signup"):
+            st.session_state["auth_mode"] = "signup"
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
         if submitted:
             if not email or not password:
@@ -694,15 +657,20 @@ def login_page():
             password = st.text_input("Password", type="password", key="signup_password")
             confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
 
-            col1, col2 = st.columns([1, 1])
-            with col2:
-                submitted = st.form_submit_button("Create")
+            st.markdown(
+                '<div class="tagline">'
+                "<strong>Chairie</strong>, Made by Students, for Students."
+                "</div>",
+                unsafe_allow_html=True,
+            )
 
-        switch_col1, switch_col2 = st.columns([1, 1])
-        with switch_col1:
-            if st.button("Sign in instead", key="go_login"):
-                st.session_state["auth_mode"] = "login"
-                st.rerun()
+            submitted = st.form_submit_button("Create")
+
+        st.markdown('<div class="switch-row">', unsafe_allow_html=True)
+        if st.button("Sign in instead", key="go_login"):
+            st.session_state["auth_mode"] = "login"
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
         if submitted:
             if not email or not password or not confirm:
@@ -720,10 +688,7 @@ def login_page():
                 else:
                     st.error(result["message"])
 
-    # ── Card closes ──
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ── Footer (language + links, like Google) ──
+    # ── Footer ──
     st.markdown(
         """
         <div class="login-footer">
