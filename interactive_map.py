@@ -1,7 +1,6 @@
 """
 interactive_map.py
-Interactive library floor map with clickable seat dots.
-Renders seats based on x,y coordinates and syncs with seat status.
+Interactive library floor map with clickable seat dots positioned at exact x,y coordinates.
 """
 
 import streamlit as st
@@ -29,38 +28,30 @@ def get_seat_color(status):
     }
     return colors.get(status.lower(), "#9ca3af")
 
-def render_interactive_map(seats, selected_seat_id=None):
+def render_interactive_map(seats_data, selected_seat_id=None):
     """
-    Render interactive map with clickable seat dots.
-    Clicking a seat scrolls down to seat details section.
+    Render interactive map with seat dots at exact x,y coordinates from JSON.
     """
-    if not seats:
+    if not seats_data:
         st.warning("No seat data available")
         return
     
-    # Filter for ground floor only (floor "0" or "Ground Floor")
-    ground_floor_seats = [s for s in seats if str(s.get("floor", "0")) == "0"]
-    if not ground_floor_seats:
-        # If no floor field, use all seats
-        ground_floor_seats = seats
-    
-    # Find map dimensions
-    max_x = max(s.get("x", 0) for s in ground_floor_seats)
-    max_y = max(s.get("y", 0) for s in ground_floor_seats)
+    # Find map dimensions from the data
+    max_x = max(s.get("x", 0) for s in seats_data)
+    max_y = max(s.get("y", 0) for s in seats_data)
     
     # Add padding
     map_width = max_x + 100
     map_height = max_y + 100
     
-    # Create seat data for JavaScript
-    seats_data = []
-    for seat in ground_floor_seats:
-        seats_data.append({
+    # Prepare seats data for JavaScript
+    seats_json = []
+    for seat in seats_data:
+        seats_json.append({
             "id": seat["id"],
             "x": seat.get("x", 0),
             "y": seat.get("y", 0),
             "status": seat.get("status", "available"),
-            "code": seat.get("code", f"Seat {seat['id']}"),
             "color": get_seat_color(seat.get("status", "available"))
         })
     
@@ -100,13 +91,12 @@ def render_interactive_map(seats, selected_seat_id=None):
         ">
     """
     
-    # Add seat dots
-    for seat in seats_data:
+    # Add seat dots at exact x,y positions
+    for seat in seats_json:
         is_selected = "selected" if seat["id"] == selected_seat_id else ""
         html_code += f"""
             <div class="seat-dot {is_selected}" 
                  data-seat-id="{seat['id']}" 
-                 data-seat-code="{seat['code']}"
                  style="
                     position: absolute;
                     left: {seat['x']}px;
@@ -123,8 +113,8 @@ def render_interactive_map(seats, selected_seat_id=None):
                  "
                  onmouseover="this.style.transform='scale(1.3)'; this.style.zIndex='100';"
                  onmouseout="this.style.transform='scale(1)'; if(!this.classList.contains('selected')) this.style.zIndex='10';"
-                 onclick="selectSeat({seat['id']}, '{seat['code']}')"
-                 title="{seat['code']} - {seat['status']}">
+                 onclick="selectSeat({seat['id']})"
+                 title="Seat {seat['id']} - {seat['status']}">
             </div>
         """
     
@@ -161,10 +151,10 @@ def render_interactive_map(seats, selected_seat_id=None):
     </div>
     
     <script>
-    function selectSeat(seatId, seatCode) {
-        // Update Streamlit session state via query params
+    function selectSeat(seatId) {
+        // Update URL with seat parameter
         const url = new URL(window.location);
-        url.searchParams.set('seat', seatId);
+        url.searchParams.set('seat', seatId.toString());
         window.history.pushState({}, '', url);
         
         // Scroll to seat details section
@@ -188,7 +178,7 @@ def render_interactive_map(seats, selected_seat_id=None):
         }, '*');
     }
     
-    // Check URL params on load
+    // Check URL params on load and highlight selected seat
     window.addEventListener('load', function() {
         const urlParams = new URLSearchParams(window.location.search);
         const seatId = urlParams.get('seat');
@@ -208,24 +198,20 @@ def render_interactive_map(seats, selected_seat_id=None):
     </script>
     
     <style>
-    .seat-dot.selected {{
+    .seat-dot.selected {
         box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.5), 0 4px 8px rgba(0,0,0,0.3);
         z-index: 100 !important;
-    }}
+    }
     </style>
     """
     
     st.markdown(html_code, unsafe_allow_html=True)
-    
-    # Return info about selected seat
-    return ground_floor_seats
 
 def handle_seat_selection(all_seats):
     """
     Handle seat selection from URL parameters.
     Returns the selected seat object or None.
     """
-    # Check query params
     query_params = st.query_params
     selected_id = query_params.get("seat")
     
