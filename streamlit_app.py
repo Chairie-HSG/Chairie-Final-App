@@ -442,10 +442,6 @@ def seat_status_color(status):
 # AUTH PAGE  (login + signup — from auth.py, styled via indexnew.html HTML)
 # ─────────────────────────────────────────────────────────────
 
-import os
-import streamlit as st
-
-
 def login_page():
     # ── Google-style CSS ──
     st.markdown(
@@ -564,22 +560,6 @@ def login_page():
             background: #f8f9fa !important;
             border-color: #d2d5d9 !important;
         }
-
-        /* Footer */
-        .login-footer {
-            display: flex;
-            justify-content: space-between;
-            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
-            font-size: 12px;
-            color: #5f6368;
-            margin-top: 32px;
-            padding: 0 8px;
-        }
-        .login-footer a {
-            color: #5f6368;
-            text-decoration: none;
-            margin-left: 16px;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -687,22 +667,6 @@ def login_page():
                     st.session_state["auth_mode"] = "login"
                 else:
                     st.error(result["message"])
-
-    # ── Footer ──
-    st.markdown(
-        """
-        <div class="login-footer">
-            <span>English (United States) ▾</span>
-            <span>
-                <a href="#">Help</a>
-                <a href="#">Privacy</a>
-                <a href="#">Terms</a>
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
 # ─────────────────────────────────────────────────────────────
 # MAIN APP  (combined indexnew.html layout + app.py logic)
 # ─────────────────────────────────────────────────────────────
