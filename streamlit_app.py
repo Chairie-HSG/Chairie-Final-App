@@ -4,9 +4,11 @@ All-in-one Streamlit seat booking app for HSG Library.
 Uses interactive_map.py for ground floor visualization.
 """
 
+""" 
 ─────────────────────────────────────────────────────────────
 IMPORTS
 ─────────────────────────────────────────────────────────────
+"""
 import os
 import datetime
 from datetime import datetime as dt, timedelta, timezone
@@ -17,10 +19,11 @@ from interactive_map import render_interactive_map, handle_seat_selection, load_
 # Supabase
 import os
 from supabase import create_client
-
+"""
 ─────────────────────────────────────────────────────────────
 SUPABASE CLIENT
 ─────────────────────────────────────────────────────────────
+"""
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -39,10 +42,11 @@ if SUPABASE_URL and SUPABASE_KEY:
         SUPABASE_OK = True
     except Exception:
         SUPABASE_OK = False
-
+"""
 ─────────────────────────────────────────────────────────────
 TIMER HELPERS
 ─────────────────────────────────────────────────────────────
+"""
 def has_expired(check_in_time: dt) -> bool:
     """Returns True if 2 hours have passed since check_in_time."""
     expiry_time = check_in_time + timedelta(hours=2)
@@ -57,10 +61,11 @@ def free_expired_seats(seats: list) -> None:
             if has_expired(check_in_time):
                 seat["occupied"] = False
                 seat["check_in_time"] = None
-
+"""
 ─────────────────────────────────────────────────────────────
 API LAYER
 ─────────────────────────────────────────────────────────────
+"""
 RESERVATION_MINUTES = 10
 RECHECK_HOURS = 2
 
@@ -357,10 +362,11 @@ def release_current_seat(token):
         return {"success": False, "message": "No active seat to release."}
     except Exception as e:
         return {"success": False, "message": str(e)}
-
+"""
 ─────────────────────────────────────────────────────────────
 AUTH STATE
 ─────────────────────────────────────────────────────────────
+"""
 def init_auth_state():
     defaults = {
         "logged_in": False,
@@ -391,10 +397,11 @@ def require_login():
     if not is_logged_in():
         st.warning("Please log in first.")
         st.stop()
-
+"""
 ─────────────────────────────────────────────────────────────
 COUNTDOWN HELPERS
 ─────────────────────────────────────────────────────────────
+"""
 def seconds_left(iso_value):
     if not iso_value:
         return 0
@@ -409,10 +416,11 @@ def countdown(iso_value):
 
 def seat_status_color(status):
     return {"free": "#1db954", "reserved": "#ff9800", "occupied": "#e53935"}.get(status, "#9ca3af")
-
+"""
 ─────────────────────────────────────────────────────────────
 AUTH PAGE
 ─────────────────────────────────────────────────────────────
+"""
 def login_page():
     st.markdown(
         """
@@ -623,10 +631,11 @@ def login_page():
                     st.session_state["auth_mode"] = "login"
                 else:
                     st.error(result["message"])
-
+"""
 ─────────────────────────────────────────────────────────────
 MAIN APP
 ─────────────────────────────────────────────────────────────
+"""
 def main_app():
     require_login()
     
@@ -804,10 +813,11 @@ def main_app():
                     st.error(result["message"])
         else:
             st.error("❌ This seat is already occupied by someone else.")
-
+"""
 ─────────────────────────────────────────────────────────────
 ENTRY POINT
 ─────────────────────────────────────────────────────────────
+"""
 def main():
     st.set_page_config(page_title="HSG Study Spots", layout="wide")
     init_auth_state()
