@@ -441,153 +441,302 @@ def seat_status_color(status):
 # ─────────────────────────────────────────────────────────────
 # AUTH PAGE  (login + signup — from auth.py, styled via indexnew.html HTML)
 # ─────────────────────────────────────────────────────────────
+
+import os
+import streamlit as st
+
+
 def login_page():
-    # ── Top bar (indexnew.html design) ──
+    # ── Google-style CSS ──
     st.markdown(
         """
         <style>
-        .login-wrapper{
-            display: flex;
-            justify-content:center;
-            align-items: center;
-            min-height: 75vh;
+        /* Hide default Streamlit chrome for a cleaner look */
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+        header {visibility: hidden;}
+
+        /* Page background — Google uses a very light grey */
+        .stApp {
+            background-color: #ffffff;
         }
 
-        .login-card{
-            width: 430px;
-            padding: 42px 44px;
+        /* Center the card vertically and horizontally */
+        .block-container {
+            padding-top: 3rem;
+            padding-bottom: 3rem;
+            max-width: 500px;
+        }
+
+        /* The login card itself */
+        .login-card {
             border: 1px solid #dadce0;
-            border-radius: 12px;
-            background: white;
-            box-shadow: 0 2px 8px rgba (0, 0, 0, 0.04);
-            margin: auto;
+            border-radius: 8px;
+            background: #ffffff;
+            padding: 48px 40px 36px 40px;
+            margin: 0 auto;
         }
 
-        .app-logo {
-            width: 110px;
-            margin-bottom: 18px;
+        /* Logo / brand block */
+        .brand {
+            text-align: center;
+            margin-bottom: 16px;
         }
-
-        .login-title{
-            font-size: 28px;
+        .brand-text {
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+            font-size: 26px;
             font-weight: 500;
+            color: #0a8f4d;
+            letter-spacing: 0.5px;
+        }
+
+        /* Title and subtitle (Google: "Sign in" + "Use your Google Account") */
+        .login-title {
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+            font-size: 24px;
+            font-weight: 400;
             color: #202124;
+            text-align: center;
+            margin-top: 8px;
             margin-bottom: 8px;
         }
-
         .login-subtitle {
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 16px;
+            font-weight: 400;
             color: #202124;
-            margin-bottom: 28px;
+            text-align: center;
+            margin-bottom: 32px;
         }
 
-        .stTextInput input {
-            height: 52px;
-            border-radius: 4px;
-            border: 1px solid #dadce0;
-            font-size: 15px;
+        /* Inputs — Google's outlined style */
+        .stTextInput > div > div > input {
+            height: 56px !important;
+            border-radius: 4px !important;
+            border: 1px solid #dadce0 !important;
+            font-size: 16px !important;
+            padding: 13px 15px !important;
+            color: #202124 !important;
+        }
+        .stTextInput > div > div > input:focus {
+            border: 2px solid #1a73e8 !important;
+            box-shadow: none !important;
+            outline: none !important;
+        }
+        .stTextInput label {
+            font-size: 13px !important;
+            color: #5f6368 !important;
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif !important;
         }
 
-        .stTextInput input:focus {
-            border: 2px solid #1a73e8;
+        /* "Forgot email?" / helper link style */
+        .helper-link {
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+            font-size: 14px;
+            font-weight: 500;
+            color: #1a73e8;
+            margin-top: 4px;
+            margin-bottom: 24px;
+            cursor: pointer;
         }
 
-        .stButton button {
-            border-radius: 5px;
-            height: 42px;
+        /* Guest-mode info text */
+        .guest-info {
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+            font-size: 14px;
+            color: #202124;
+            line-height: 1.5;
+            margin-top: 24px;
+            margin-bottom: 32px;
+        }
+        .guest-info a {
+            color: #1a73e8;
+            text-decoration: none;
             font-weight: 500;
         }
 
+        /* Bottom row: "Create account" (text link) + "Next" (filled button) */
+        /* Style the secondary button (Create account) */
+        div[data-testid="column"]:nth-of-type(1) .stButton button {
+            background: transparent !important;
+            color: #1a73e8 !important;
+            border: none !important;
+            font-weight: 500 !important;
+            font-size: 14px !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            height: 36px !important;
+            text-align: left !important;
+            justify-content: flex-start !important;
+        }
+        div[data-testid="column"]:nth-of-type(1) .stButton button:hover {
+            background: rgba(26, 115, 232, 0.04) !important;
+            color: #1a73e8 !important;
+        }
+
+        /* Style the primary submit button (Next) */
         .stFormSubmitButton button {
-            background-color: #1a73e8
-            color: white;
-            border-radius: 5px;
-            height: 42px;
-            font-weight: 500;
-            float: right;
-            padding: 0 24px;
+            background-color: #1a73e8 !important;
+            color: #ffffff !important;
+            border: none !important;
+            border-radius: 4px !important;
+            height: 36px !important;
+            font-weight: 500 !important;
+            font-size: 14px !important;
+            padding: 0 24px !important;
+            float: right !important;
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif !important;
+        }
+        .stFormSubmitButton button:hover {
+            background-color: #1765cc !important;
+            color: #ffffff !important;
+            box-shadow: 0 1px 2px rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15) !important;
         }
 
-        .stFormSubmitButton button:hover {
-            background-color: #1765cc;
-            color: white;
+        /* Footer (language + Help/Privacy/Terms) */
+        .login-footer {
+            display: flex;
+            justify-content: space-between;
+            font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
+            font-size: 12px;
+            color: #5f6368;
+            margin-top: 24px;
+            padding: 0 8px;
+        }
+        .login-footer a {
+            color: #5f6368;
+            text-decoration: none;
+            margin-left: 16px;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="login-wrapper"><div class="login-card">', unsafe_allow_html=True)
+    # ── Card opens ──
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
 
-#put logo
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-logo_path = os.path.join(BASE_DIR, "full_size_logo.png")
+    # ── Logo (image if available, else text fallback) ──
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    logo_path = os.path.join(BASE_DIR, "full_size_logo.png")
 
-if os.path.exists(logo_path):
-    st.image(logo_path, width=110)
-else:
+    if os.path.exists(logo_path):
+        # Center the logo using columns
+        c1, c2, c3 = st.columns([1, 1, 1])
+        with c2:
+            st.image(logo_path, width=110)
+    else:
+        st.markdown(
+            '<div class="brand"><span class="brand-text">HSG</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Mode state ──
+    mode = st.session_state.get("auth_mode", "login")
+
+    # ── Title / subtitle (changes by mode) ──
+    if mode == "login":
+        st.markdown('<div class="login-title">Sign in</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="login-subtitle">Use your Seat Booking account</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown('<div class="login-title">Create your account</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="login-subtitle">to continue to Seat Booking</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Forms ──
+    if mode == "login":
+        with st.form("login_form", clear_on_submit=False):
+            email = st.text_input("Email", placeholder="", key="login_email")
+            password = st.text_input("Password", type="password", key="login_password")
+
+            st.markdown(
+                '<div class="guest-info">'
+                "Not your computer? Use Guest mode to sign in privately. "
+                '<a href="#">Learn more about using Guest mode</a>'
+                "</div>",
+                unsafe_allow_html=True,
+            )
+
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                # "Create account" as a left-aligned text link button (outside form for routing)
+                pass
+            with col2:
+                submitted = st.form_submit_button("Next")
+
+        # Switch-mode button rendered outside the form so it can rerun
+        switch_col1, switch_col2 = st.columns([1, 1])
+        with switch_col1:
+            if st.button("Create account", key="go_signup"):
+                st.session_state["auth_mode"] = "signup"
+                st.rerun()
+
+        if submitted:
+            if not email or not password:
+                st.warning("Please enter both email and password.")
+            else:
+                result = login_request(email, password)
+                if result["success"]:
+                    login_user(result["username"], result["token"])
+                    st.success("Login successful.")
+                    st.rerun()
+                else:
+                    st.error(result["message"])
+
+    else:  # signup
+        with st.form("signup_form", clear_on_submit=False):
+            email = st.text_input("Email", key="signup_email")
+            password = st.text_input("Password", type="password", key="signup_password")
+            confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
+
+            col1, col2 = st.columns([1, 1])
+            with col2:
+                submitted = st.form_submit_button("Create")
+
+        switch_col1, switch_col2 = st.columns([1, 1])
+        with switch_col1:
+            if st.button("Sign in instead", key="go_login"):
+                st.session_state["auth_mode"] = "login"
+                st.rerun()
+
+        if submitted:
+            if not email or not password or not confirm:
+                st.warning("Please fill in all fields.")
+            elif password != confirm:
+                st.warning("Passwords do not match.")
+            elif len(password) < 6:
+                st.warning("Password must be at least 6 characters.")
+            else:
+                result = signup_request(email, password)
+                if result["success"]:
+                    st.success(result["message"])
+                    st.info("Go back to Sign in and use your new account.")
+                    st.session_state["auth_mode"] = "login"
+                else:
+                    st.error(result["message"])
+
+    # ── Card closes ──
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # ── Footer (language + links, like Google) ──
     st.markdown(
-        "<div style='font-size:32px; font-weight:bold; color:#0a8f4d; margin-bottom:18px; '>HSG</div>",
+        """
+        <div class="login-footer">
+            <span>English (United States) ▾</span>
+            <span>
+                <a href="#">Help</a>
+                <a href="#">Privacy</a>
+                <a href="#">Terms</a>
+            </span>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
-
-st.markdown('<div class="login-title">Login</div>', unsafe_allow_html=True)
-st.markdown('<div class="login-subtitle">Seat Booking System</div>', unsafe_allow_html=True)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button("Login", use_container_width=True):
-        st.session_state["auth_mode"] = "login"
-        st.rerun()
-with col2:
-    if st.button("Sign Up", use_container_width=True):
-        st.session_state["auth_mode"] = "signup"
-        st.rerun()
-
-mode = st.session_state.get("auth_mode", "login")
-
-if mode == "login":
-    with st.form("login_form"):
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
-    if submitted:
-        if not email or not password:
-            st.warning("Please enter both email and password.")
-            st.stop()
-        result = login_request(email, password)
-        if result["success"]:
-            login_user(result["username"], result["token"])
-            st.success("Login successful.")
-            st.rerun()
-        else:
-            st.error(result["message"])
-else:
-    with st.form("signup_form"):
-        email = st.text_input("Email")
-        password = st.text_input("Password", type="password")
-        confirm = st.text_input("Confirm Password", type="password")
-        submitted = st.form_submit_button("Create Account")
-    if submitted:
-        if not email or not password or not confirm:
-            st.warning("Please fill in all fields.")
-            st.stop()
-        if password != confirm:
-            st.warning("Passwords do not match.")
-            st.stop()
-        if len(password) < 6:
-            st.warning("Password must be at least 6 characters.")
-            st.stop()
-        result = signup_request(email, password)
-        if result["success"]:
-            st.success(result["message"])
-            st.info("Go back to Login and sign in with your new account.")
-            st.session_state["auth_mode"] = "login"
-        else:
-            st.error(result["message"])
-
-st.markdown("</div></div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # MAIN APP  (combined indexnew.html layout + app.py logic)
