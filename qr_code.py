@@ -4,7 +4,7 @@ def show_checkin(token: str, expected_seat_id, expected_seat_code:str, check_in_
     """Render a simple text-based check-in UI inside a Streamlit page.
     The user types in the code printed on their physical seat.
     If it matches the reservation they can confirm check-in."""
-    st.markdown ("###Check in")
+    st.markdown ("### Check in")
     st.caption("Type the code printed on your seat to confirm you are there")
 
     #User types seat code
@@ -21,12 +21,12 @@ def show_checkin(token: str, expected_seat_id, expected_seat_code:str, check_in_
     #Validate entered code matches reservation
     if entered_code.lower() != expected_seat_code.lower():
         st.error(
-            f"Wrong code! You entered'{entered_code}'"
+            f"Wrong code! You entered '{entered_code}'"
         )
         return
     
     #Confirm and check in
-    st.success(f"Code matches your reservation for seat{expected_seat_code}!")
+    st.success(f"Code matches your reservation for seat {expected_seat_code}!")
 
     #Confirm button so the user consciously completes check in
     if st.button("Confirm Check-in"):
@@ -34,6 +34,17 @@ def show_checkin(token: str, expected_seat_id, expected_seat_code:str, check_in_
 
         if result["success"]:
             st.success(result["message"])
-            st.return() #refresh app to show updated seat status
+            st.rerun() #refresh app to show updated seat status
         else:
             st.error(result["message"])
+
+#test run lol
+def fake_check_in(token, seat_id):
+    return {"success": True, "message": f"Checked in to seat {seat_id}!"}
+
+show_checkin(
+    token="fake_token"
+    expected_seat_id=42
+    expected_seat_code="A-14",
+    check_in_fn=fake_check_in,
+)
