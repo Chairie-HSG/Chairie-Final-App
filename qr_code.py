@@ -26,7 +26,7 @@ def show_checkin(token: str, expected_seat_id, expected_seat_code:str, check_in_
         return
     
     #Confirm and check in
-    st.success(f"Code matches your reservation for seat {expected_seat_code}!")
+    st.success(f"Code matches your reservation for seat {expected_seat_code} !")
 
     #Confirm button so the user consciously completes check in
     if st.button("Confirm Check-in"):
