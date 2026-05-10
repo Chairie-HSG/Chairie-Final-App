@@ -19,6 +19,29 @@ from datetime import datetime as dt, timedelta, timezone
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
+# ─────────────────────────────────────────────────────────────
+# INTERACTIVE MAP  (from interactive_map.py)
+# Graceful fallback: if the module is missing, the app still runs
+# with the legacy static-image + button-grid view.
+# ─────────────────────────────────────────────────────────────
+try:
+    from interactive_map import (
+        load_map_data as load_layout_data,
+        render_interactive_map,
+        handle_seat_selection,
+        clear_seat_selection,
+    )
+    INTERACTIVE_MAP_AVAILABLE = True
+except Exception:
+    INTERACTIVE_MAP_AVAILABLE = False
+
+    def clear_seat_selection():  # noqa: E306  (fallback no-op)
+        try:
+            if "seat" in st.query_params:
+                del st.query_params["seat"]
+        except Exception:
+            pass
+
 # Supabase
 import os
 from supabase import create_client
@@ -409,6 +432,11 @@ def logout_user():
     st.session_state["username"] = None
     st.session_state["token"] = None
     st.session_state["selected_seat_id"] = None
+    # Drop ?seat=… from the URL so a fresh session starts clean.
+    try:
+        clear_seat_selection()
+    except Exception:
+        pass
 
 
 def require_login():
@@ -781,81 +809,152 @@ def main_app():
         unsafe_allow_html=True,
     )
 
-    # ── Map box with library floor plan image (indexnew.html map-box) ──
+    # ── Map: interactive (clickable dots) if JSON layout exists, else legacy image+grid ──
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    img_map = {
-        "Ground Floor": os.path.join(BASE_DIR, "Library_GFloor.jpg"),
-        "Floor 1": os.path.join(BASE_DIR, "Library_1Floor.jpg"),
+
+    # Per-floor layout JSON. Ground Floor uses the default candidates handled by
+    # interactive_map.load_map_data(). Floor 1 is optional — if you generate a
+    # layout for it later, drop it next to streamlit_app.py with this filename.
+    floor_layout_overrides = {
+        "Floor 1": os.path.join(BASE_DIR, "library_map_data_floor1.json"),
     }
-    img_file = img_map[floor_choice]
 
-    st.markdown(
-        f"""
-        <div style="border:2px solid #1f4c66; border-radius:8px; padding:20px;
-                    background:#fafafa; margin-bottom:24px;">
-          <div style="margin-bottom:14px; font-size:20px; font-weight:600; color:#444;">
-            Map — {floor_choice}
-          </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    layout = None
+    if INTERACTIVE_MAP_AVAILABLE:
+        override = floor_layout_overrides.get(floor_choice)
+        if override is not None:
+            # Try the floor-specific file silently; falls through to None if absent.
+            layout = load_layout_data(override, silent=True)
+        else:
+            # Ground Floor (default): use the candidate filenames built into the module.
+            layout = load_layout_data(silent=True)
 
-    # Show library floor plan image (from Library_GFloor.jpg / Library_1Floor.jpg)
-    if os.path.exists(img_file):
-        st.image(img_file, use_container_width=True)
+    if layout and layout.get("seats"):
+        # ── INTERACTIVE MAP PATH ────────────────────────────────────────────
+        # Merge layout coordinates with live Supabase status (by seat id).
+        supabase_by_id = {int(s["id"]): s for s in floor_seats}
+
+        merged_seats = []
+        for layout_seat in layout["seats"]:
+            try:
+                sid = int(layout_seat["id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            live = supabase_by_id.get(sid)
+            merged_seats.append({
+                "id":     sid,
+                "x":      int(layout_seat.get("x", 0)),
+                "y":      int(layout_seat.get("y", 0)),
+                "size":   int(layout_seat.get("size", 13)),
+                # Live status if Supabase knows this seat, else gray "maintenance".
+                "status": (live or {}).get("status", "maintenance"),
+            })
+
+        # Sync the URL ?seat=… param into session_state BEFORE we render the
+        # map, so the right dot is highlighted on this run.
+        clicked = handle_seat_selection(merged_seats)
+        if clicked is not None:
+            st.session_state["selected_seat_id"] = clicked["id"]
+
+        st.markdown(
+            f"""
+            <div style="border:2px solid #1f4c66; border-radius:8px; padding:16px 16px 8px 16px;
+                        background:#fafafa; margin-bottom:24px;">
+              <div style="margin-bottom:10px; font-size:20px; font-weight:600; color:#444;">
+                Map — {floor_choice} <span style="font-weight:400; font-size:13px; color:#777;">
+                (click a dot to view seat details)</span>
+              </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        render_interactive_map(
+            merged_seats,
+            selected_seat_id=st.session_state.get("selected_seat_id"),
+            image_path=os.path.join(BASE_DIR, "Library_GFloor.jpg"),
+            show_legend=False,  # we already render a legend above
+        )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
     else:
-        st.info(f"Floor plan image '{img_file}' not found. Place it in the same directory as streamlit_app.py.")
+        # ── LEGACY FALLBACK: static image + button grid ─────────────────────
+        img_map = {
+            "Ground Floor": os.path.join(BASE_DIR, "Library_GFloor.jpg"),
+            "Floor 1":      os.path.join(BASE_DIR, "Library_1Floor.jpg"),
+        }
+        img_file = img_map.get(floor_choice, "")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style="border:2px solid #1f4c66; border-radius:8px; padding:20px;
+                        background:#fafafa; margin-bottom:24px;">
+              <div style="margin-bottom:14px; font-size:20px; font-weight:600; color:#444;">
+                Map — {floor_choice}
+              </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-    # ── Seat grid (indexnew.html seat dots rendered as Streamlit columns) ──
-    st.markdown(
-        "<div style='font-size:20px; font-weight:600; margin-bottom:14px; color:#444;'>Available Seats</div>",
-        unsafe_allow_html=True,
-    )
+        if img_file and os.path.exists(img_file):
+            st.image(img_file, use_container_width=True)
+        else:
+            st.info(
+                f"Floor plan image '{img_file}' not found. "
+                "Place it in the same directory as streamlit_app.py."
+            )
 
-    cols_per_row = 5
-    for i in range(0, len(floor_seats), cols_per_row):
-        row = floor_seats[i : i + cols_per_row]
-        cols = st.columns(cols_per_row)
-        for col, seat in zip(cols, row):
-            with col:
-                color = seat_status_color(seat["status"])
-                owner_note = ""
-                if seat["reserved_by_me"]:
-                    owner_note = "🟡 Your reservation"
-                elif seat["occupied_by_me"]:
-                    owner_note = "🟢 Your seat"
+        st.markdown("</div>", unsafe_allow_html=True)
 
-                # Seat card — styled after indexnew.html seat + map-box colours
-                st.markdown(
-                    f"""
-                    <div style="border:1px solid #2b6f95; border-radius:10px; padding:10px;
-                                margin-bottom:6px; background:#f5f9fc; text-align:center;">
-                      <div style="width:22px; height:22px; border-radius:50%;
-                                  background:{color}; border:2px solid white;
-                                  margin:0 auto 6px auto;"></div>
-                      <div style="font-size:13px; font-weight:600; color:#222;">
-                        {seat['code']}
-                      </div>
-                      <div style="font-size:11px; color:#555;">
-                        Floor {seat['floor']}
-                      </div>
-                      <div style="font-size:11px; color:{color}; font-weight:600;">
-                        {seat['status'].upper()}
-                      </div>
-                      <div style="font-size:10px; color:#0a8f4d;">{owner_note}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                if st.button(f"Select", key=f"sel_{seat['id']}"):
-                    st.session_state["selected_seat_id"] = seat["id"]
+        # Seat grid (legacy "Select" buttons)
+        st.markdown(
+            "<div style='font-size:20px; font-weight:600; margin-bottom:14px; color:#444;'>"
+            "Available Seats</div>",
+            unsafe_allow_html=True,
+        )
+
+        cols_per_row = 5
+        for i in range(0, len(floor_seats), cols_per_row):
+            row = floor_seats[i : i + cols_per_row]
+            cols = st.columns(cols_per_row)
+            for col, seat in zip(cols, row):
+                with col:
+                    color = seat_status_color(seat["status"])
+                    owner_note = ""
+                    if seat["reserved_by_me"]:
+                        owner_note = "🟡 Your reservation"
+                    elif seat["occupied_by_me"]:
+                        owner_note = "🟢 Your seat"
+
+                    st.markdown(
+                        f"""
+                        <div style="border:1px solid #2b6f95; border-radius:10px; padding:10px;
+                                    margin-bottom:6px; background:#f5f9fc; text-align:center;">
+                          <div style="width:22px; height:22px; border-radius:50%;
+                                      background:{color}; border:2px solid white;
+                                      margin:0 auto 6px auto;"></div>
+                          <div style="font-size:13px; font-weight:600; color:#222;">
+                            {seat['code']}
+                          </div>
+                          <div style="font-size:11px; color:#555;">
+                            Floor {seat['floor']}
+                          </div>
+                          <div style="font-size:11px; color:{color}; font-weight:600;">
+                            {seat['status'].upper()}
+                          </div>
+                          <div style="font-size:10px; color:#0a8f4d;">{owner_note}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("Select", key=f"sel_{seat['id']}"):
+                        st.session_state["selected_seat_id"] = seat["id"]
 
     # ── Seat detail panel (from app.py render_seat_details) ──
     st.markdown(
         """
-        <div style="border-top:2px solid #2b6f95; margin-top:24px; padding-top:20px;">
+        <div id="seat-details-section"
+             style="border-top:2px solid #2b6f95; margin-top:24px; padding-top:20px;">
           <div style="font-size:20px; font-weight:600; margin-bottom:14px; color:#444;">
             Seat Details
           </div>
