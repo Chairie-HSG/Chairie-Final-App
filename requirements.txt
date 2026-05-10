@@ -2,3 +2,6 @@ streamlit
 supabase
 streamlit-autorefresh
 python-dotenv
+pyzbar
+opencv-python-headless
+Pillow
