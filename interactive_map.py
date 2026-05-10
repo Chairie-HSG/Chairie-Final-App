@@ -1,226 +1,457 @@
 """
 interactive_map.py
-Interactive library floor map with clickable seat dots positioned at exact x,y coordinates.
+Interactive library floor map with clickable seat dots positioned at exact
+x,y coordinates from the JSON export.
+
+Designed to be imported from a main Streamlit file:
+
+    import streamlit as st
+    from interactive_map import (
+        load_map_data,
+        render_interactive_map,
+        handle_seat_selection,
+    )
+
+    data = load_map_data()                  # auto-finds the JSON
+    seats = data["seats"] if data else []
+
+    selected = handle_seat_selection(seats) # reads ?seat=… from URL
+    render_interactive_map(seats, selected_seat_id=selected["id"] if selected else None)
+
+    if selected:
+        st.success(f"Selected seat #{selected['id']} ({selected['status']})")
+
+How clicks reach Streamlit
+--------------------------
+The map is rendered as an SVG inside `st.components.v1.html`. When a dot is
+clicked, JS updates the *parent* page's URL with `?seat=<id>`, which causes
+Streamlit to rerun. `handle_seat_selection` then reads that query param.
 """
 
-import streamlit as st
+from __future__ import annotations
+
+import base64
 import json
 import os
+from typing import Dict, List, Optional
 
-def load_map_data():
-    """Load the library map data from JSON file."""
+import streamlit as st
+import streamlit.components.v1 as components
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# JSON filenames we'll try, in order. First match wins.
+_JSON_CANDIDATES = [
+    "library_map_data (1).json",
+    "library_map_data__1_.json",
+    "library_map_data_1.json",
+    "library_map_data.json",
+]
+
+# Background floor-plan image filenames we'll try, in order.
+_IMAGE_CANDIDATES = [
+    "Library_GFloor.jpg",
+    "Library_GFloor.jpeg",
+    "Library_GFloor.png",
+    "library_gfloor.jpg",
+    "library_gfloor.png",
+]
+
+# Status -> hex color
+STATUS_COLORS: Dict[str, str] = {
+    "available":   "#1db954",  # green
+    "reserved":    "#ff9800",  # orange
+    "occupied":    "#e53935",  # red
+    "maintenance": "#9ca3af",  # gray
+}
+
+DEFAULT_DOT_COLOR = "#9ca3af"
+
+
+# ---------------------------------------------------------------------------
+# File discovery
+# ---------------------------------------------------------------------------
+
+def _base_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_file(candidates: List[str], custom_path: Optional[str] = None) -> Optional[str]:
+    """Return the first existing path: explicit > script dir > cwd."""
+    if custom_path and os.path.exists(custom_path):
+        return os.path.abspath(custom_path)
+
+    base = _base_dir()
+    for name in candidates:
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
+
+    cwd = os.getcwd()
+    for name in candidates:
+        p = os.path.join(cwd, name)
+        if os.path.exists(p):
+            return p
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Data loading
+# ---------------------------------------------------------------------------
+
+def load_map_data(json_path: Optional[str] = None) -> Optional[Dict]:
+    """Load the library map data JSON.
+
+    Args:
+        json_path: optional explicit path. If omitted, tries the candidate
+            filenames above (script dir first, then cwd).
+
+    Returns:
+        The parsed dict (with keys like ``mapName``, ``totalSeats``,
+        ``seats``), or ``None`` if nothing was found / readable.
+    """
+    path = _find_file(_JSON_CANDIDATES, custom_path=json_path)
+    if not path:
+        st.error(
+            "Could not find library map data JSON. Looked for: "
+            + ", ".join(_JSON_CANDIDATES)
+        )
+        return None
     try:
-        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        json_path = os.path.join(BASE_DIR, "library_map_data (1).json")
-        with open(json_path, 'r') as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        st.error(f"Error loading map data: {e}")
+        st.error(f"Error loading map data from {path}: {e}")
         return None
 
-def get_seat_color(status):
-    """Return color based on seat status."""
-    colors = {
-        "available": "#1db954",  # Green
-        "reserved": "#ff9800",   # Orange
-        "occupied": "#e53935",   # Red
-        "maintenance": "#9ca3af" # Gray
-    }
-    return colors.get(status.lower(), "#9ca3af")
 
-def render_interactive_map(seats_data, selected_seat_id=None):
-    """
-    Render interactive map with seat dots at exact x,y coordinates from JSON.
+def get_seat_color(status: Optional[str]) -> str:
+    """Return the hex color for a seat status (case-insensitive)."""
+    return STATUS_COLORS.get((status or "").lower(), DEFAULT_DOT_COLOR)
+
+
+def _load_background_image_b64(image_path: Optional[str] = None) -> Optional[str]:
+    """Return the floor plan as a `data:` URL, or None if not found."""
+    path = _find_file(_IMAGE_CANDIDATES, custom_path=image_path)
+    if not path:
+        return None
+    try:
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        mime = "jpeg" if ext in ("jpg", "jpeg") else ext
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        return f"data:image/{mime};base64,{b64}"
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+def render_interactive_map(
+    seats_data: List[Dict],
+    selected_seat_id: Optional[int] = None,
+    image_path: Optional[str] = None,
+    height: Optional[int] = None,
+    show_legend: bool = True,
+    dot_radius: Optional[int] = None,
+) -> None:
+    """Render the interactive map as an SVG inside an iframe component.
+
+    Args:
+        seats_data: list of seat dicts, each with ``id``, ``x``, ``y``,
+            ``status`` (and optionally ``size``).
+        selected_seat_id: if given, that seat is rendered as currently
+            selected (highlighted ring).
+        image_path: optional explicit path to the floor-plan image. If the
+            file is found it will be embedded as a faded background.
+        height: pixel height for the iframe. Auto-computed from the map's
+            aspect ratio if omitted.
+        show_legend: whether to draw the colour legend overlay.
+        dot_radius: override dot radius in map coordinates. Defaults to
+            ``size / 2 + 1`` per seat (so dots stay readable).
     """
     if not seats_data:
         st.warning("No seat data available")
         return
-    
-    # Find map dimensions from the data
-    max_x = max(s.get("x", 0) for s in seats_data)
-    max_y = max(s.get("y", 0) for s in seats_data)
-    
-    # Add padding
-    map_width = max_x + 100
-    map_height = max_y + 100
-    
-    # Prepare seats data for JavaScript
-    seats_json = []
-    for seat in seats_data:
-        seats_json.append({
-            "id": seat["id"],
-            "x": seat.get("x", 0),
-            "y": seat.get("y", 0),
-            "status": seat.get("status", "available"),
-            "color": get_seat_color(seat.get("status", "available"))
-        })
-    
-    # HTML/CSS/JavaScript for interactive map
-    html_code = f"""
-    <div id="map-container" style="
-        position: relative;
-        width: 100%;
-        height: {map_height}px;
-        background: #f8f9fa;
-        border: 2px solid #1f4c66;
-        border-radius: 8px;
-        overflow: hidden;
-        margin-bottom: 20px;
-    ">
-        <!-- Library floor plan image background -->
-        <div style="
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            opacity: 0.3;
-            background-image: url('Library_GFloor.jpg');
-            background-size: contain;
-            background-position: center;
-            background-repeat: no-repeat;
-        "></div>
-        
-        <!-- Seat dots container -->
-        <div id="seats-layer" style="
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-        ">
-    """
-    
-    # Add seat dots at exact x,y positions
-    for seat in seats_json:
-        is_selected = "selected" if seat["id"] == selected_seat_id else ""
-        html_code += f"""
-            <div class="seat-dot {is_selected}" 
-                 data-seat-id="{seat['id']}" 
-                 style="
-                    position: absolute;
-                    left: {seat['x']}px;
-                    top: {seat['y']}px;
-                    width: 16px;
-                    height: 16px;
-                    border-radius: 50%;
-                    background-color: {seat['color']};
-                    border: 2px solid white;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    z-index: 10;
-                 "
-                 onmouseover="this.style.transform='scale(1.3)'; this.style.zIndex='100';"
-                 onmouseout="this.style.transform='scale(1)'; if(!this.classList.contains('selected')) this.style.zIndex='10';"
-                 onclick="selectSeat({seat['id']})"
-                 title="Seat {seat['id']} - {seat['status']}">
-            </div>
-        """
-    
-    html_code += """
-        </div>
-        
-        <!-- Legend -->
-        <div style="
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: rgba(255,255,255,0.9);
-            padding: 10px;
-            border-radius: 6px;
-            font-family: Arial, sans-serif;
-            font-size: 12px;
-            z-index: 100;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        ">
-            <div style="margin-bottom: 5px; font-weight: bold;">Legend:</div>
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 3px;">
-                <span style="width: 12px; height: 12px; border-radius: 50%; background: #1db954; display: inline-block;"></span>
-                <span>Available</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 3px;">
-                <span style="width: 12px; height: 12px; border-radius: 50%; background: #ff9800; display: inline-block;"></span>
-                <span>Reserved</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="width: 12px; height: 12px; border-radius: 50%; background: #e53935; display: inline-block;"></span>
-                <span>Occupied</span>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-    function selectSeat(seatId) {
-        // Update URL with seat parameter
-        const url = new URL(window.location);
-        url.searchParams.set('seat', seatId.toString());
-        window.history.pushState({}, '', url);
-        
-        // Scroll to seat details section
-        const seatDetails = document.getElementById('seat-details-section');
-        if (seatDetails) {
-            seatDetails.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        
-        // Highlight the selected seat
-        document.querySelectorAll('.seat-dot').forEach(dot => {
-            dot.classList.remove('selected');
-            dot.style.zIndex = '10';
-        });
-        event.target.classList.add('selected');
-        event.target.style.zIndex = '100';
-        
-        // Trigger Streamlit rerun with new query param
-        window.parent.postMessage({
-            type: 'set_query_params',
-            data: { seat: seatId.toString() }
-        }, '*');
-    }
-    
-    // Check URL params on load and highlight selected seat
-    window.addEventListener('load', function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const seatId = urlParams.get('seat');
-        if (seatId) {
-            setTimeout(function() {
-                const seatDot = document.querySelector(`.seat-dot[data-seat-id="${seatId}"]`);
-                if (seatDot) {
-                    seatDot.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    seatDot.style.transform = 'scale(1.5)';
-                    setTimeout(() => {
-                        seatDot.style.transform = 'scale(1.3)';
-                    }, 1000);
-                }
-            }, 500);
-        }
-    });
-    </script>
-    
-    <style>
-    .seat-dot.selected {
-        box-shadow: 0 0 0 4px rgba(26, 115, 232, 0.5), 0 4px 8px rgba(0,0,0,0.3);
-        z-index: 100 !important;
-    }
-    </style>
-    """
-    
-    st.markdown(html_code, unsafe_allow_html=True)
 
-def handle_seat_selection(all_seats):
+    # Coordinate space — derive from the data so it always fits.
+    xs = [int(s.get("x", 0)) for s in seats_data]
+    ys = [int(s.get("y", 0)) for s in seats_data]
+    pad = 40
+    map_width  = max(xs) + pad
+    map_height = max(ys) + pad
+
+    # Build the seat payload for JS.
+    seats_payload = []
+    for s in seats_data:
+        size = int(s.get("size", 13))
+        r = dot_radius if dot_radius is not None else max(6, size // 2 + 1)
+        seats_payload.append({
+            "id":     int(s["id"]),
+            "x":      int(s.get("x", 0)),
+            "y":      int(s.get("y", 0)),
+            "r":      int(r),
+            "status": str(s.get("status", "available")),
+            "color":  get_seat_color(s.get("status", "available")),
+        })
+
+    seats_json   = json.dumps(seats_payload)
+    selected_js  = "null" if selected_seat_id is None else json.dumps(int(selected_seat_id))
+    bg_data_url  = _load_background_image_b64(image_path)
+
+    bg_svg = ""
+    if bg_data_url:
+        bg_svg = (
+            f'<image href="{bg_data_url}" xlink:href="{bg_data_url}" '
+            f'x="0" y="0" width="{map_width}" height="{map_height}" '
+            f'preserveAspectRatio="xMidYMid meet" opacity="0.55"/>'
+        )
+
+    # Iframe height: keep the natural aspect ratio. Assume the component
+    # gets ~700px of width inside a typical Streamlit column.
+    if height is None:
+        assumed_width = 720
+        height = int(assumed_width * map_height / map_width) + 24
+        height = max(380, min(height, 820))
+
+    legend_html = ""
+    if show_legend:
+        legend_html = """
+        <div class="legend">
+          <div class="legend-title">Legend</div>
+          <div class="legend-row"><span class="ldot" style="background:#1db954"></span>Available</div>
+          <div class="legend-row"><span class="ldot" style="background:#ff9800"></span>Reserved</div>
+          <div class="legend-row"><span class="ldot" style="background:#e53935"></span>Occupied</div>
+          <div class="legend-row"><span class="ldot" style="background:#9ca3af"></span>Maintenance</div>
+        </div>
+        """
+
+    html_code = f"""
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body {{
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    background: transparent;
+  }}
+  #wrap {{
+    position: relative;
+    width: 100%;
+    background: #f8f9fa;
+    border: 2px solid #1f4c66;
+    border-radius: 8px;
+    overflow: hidden;
+    box-sizing: border-box;
+  }}
+  svg#map {{
+    display: block;
+    width: 100%;
+    height: auto;
+    background: #ffffff;
+  }}
+  .seat {{
+    cursor: pointer;
+    transition: transform 0.12s ease, filter 0.12s ease;
+    transform-box: fill-box;
+    transform-origin: center;
+  }}
+  .seat:hover {{
+    transform: scale(1.5);
+    filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));
+  }}
+  .seat.selected {{
+    stroke: #1a73e8;
+    stroke-width: 3;
+    transform: scale(1.6);
+    filter: drop-shadow(0 0 6px rgba(26,115,232,0.75));
+  }}
+  .legend {{
+    position: absolute;
+    bottom: 10px; left: 10px;
+    background: rgba(255,255,255,0.95);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    pointer-events: none;
+  }}
+  .legend-title {{ font-weight: 600; margin-bottom: 4px; }}
+  .legend-row   {{ display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }}
+  .ldot         {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; }}
+  #tooltip {{
+    position: absolute;
+    background: #1f4c66; color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    transform: translate(-50%, -130%);
+    white-space: nowrap;
+    z-index: 1000;
+  }}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <svg id="map"
+       viewBox="0 0 {map_width} {map_height}"
+       preserveAspectRatio="xMidYMid meet"
+       xmlns="http://www.w3.org/2000/svg"
+       xmlns:xlink="http://www.w3.org/1999/xlink">
+    {bg_svg}
+    <g id="seats-layer"></g>
+  </svg>
+  {legend_html}
+  <div id="tooltip"></div>
+</div>
+
+<script>
+(function() {{
+  const SEATS       = {seats_json};
+  const SELECTED_ID = {selected_js};
+  const SVG_NS      = "http://www.w3.org/2000/svg";
+
+  const layer   = document.getElementById("seats-layer");
+  const wrap    = document.getElementById("wrap");
+  const tooltip = document.getElementById("tooltip");
+
+  function statusLabel(s) {{
+    if (!s) return "";
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }}
+
+  SEATS.forEach(function(seat) {{
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("cx", seat.x);
+    c.setAttribute("cy", seat.y);
+    c.setAttribute("r",  seat.r);
+    c.setAttribute("fill",   seat.color);
+    c.setAttribute("stroke", "white");
+    c.setAttribute("stroke-width", "1.5");
+    c.classList.add("seat");
+    if (seat.id === SELECTED_ID) c.classList.add("selected");
+    c.dataset.seatId = seat.id;
+
+    c.addEventListener("mouseenter", function() {{
+      const wRect = wrap.getBoundingClientRect();
+      const cRect = c.getBoundingClientRect();
+      tooltip.style.left = (cRect.left - wRect.left + cRect.width / 2) + "px";
+      tooltip.style.top  = (cRect.top  - wRect.top) + "px";
+      tooltip.textContent = "Seat " + seat.id + " — " + statusLabel(seat.status);
+      tooltip.style.opacity = "1";
+    }});
+    c.addEventListener("mouseleave", function() {{
+      tooltip.style.opacity = "0";
+    }});
+    c.addEventListener("click", function(ev) {{
+      ev.stopPropagation();
+      selectSeat(seat.id);
+    }});
+
+    layer.appendChild(c);
+  }});
+
+  function selectSeat(seatId) {{
+    // Visual feedback before navigation.
+    document.querySelectorAll(".seat").forEach(function(d) {{ d.classList.remove("selected"); }});
+    const target = document.querySelector('.seat[data-seat-id="' + seatId + '"]');
+    if (target) target.classList.add("selected");
+
+    // Push ?seat=<id> onto the parent (top) frame so Streamlit reruns
+    // and st.query_params picks up the value.
+    try {{
+      const parentLoc = window.parent.location;
+      const url = new URL(parentLoc.href);
+      url.searchParams.set("seat", String(seatId));
+      window.parent.location.href = url.toString();
+      return;
+    }} catch (e) {{ /* fall through */ }}
+
+    try {{
+      const url = new URL(window.top.location.href);
+      url.searchParams.set("seat", String(seatId));
+      window.top.location.href = url.toString();
+      return;
+    }} catch (e) {{ /* fall through */ }}
+
+    // Last resort: same-frame nav (won't update Streamlit, but at least
+    // surfaces the click).
+    const url = new URL(window.location.href);
+    url.searchParams.set("seat", String(seatId));
+    window.location.href = url.toString();
+  }}
+
+  // Bring the currently-selected dot into view if it would be off-screen.
+  if (SELECTED_ID !== null) {{
+    const sel = document.querySelector('.seat[data-seat-id="' + SELECTED_ID + '"]');
+    if (sel && sel.scrollIntoView) {{
+      try {{ sel.scrollIntoView({{ behavior: "smooth", block: "center" }}); }} catch (e) {{}}
+    }}
+  }}
+}})();
+</script>
+</body>
+</html>
+"""
+
+    components.html(html_code, height=height, scrolling=False)
+
+
+# ---------------------------------------------------------------------------
+# Selection helper
+# ---------------------------------------------------------------------------
+
+def handle_seat_selection(all_seats: List[Dict]) -> Optional[Dict]:
+    """Read ``?seat=<id>`` from the URL and return the matching seat dict.
+
+    Returns ``None`` if the param is missing, malformed, or doesn't match
+    any seat in ``all_seats``.
     """
-    Handle seat selection from URL parameters.
-    Returns the selected seat object or None.
-    """
-    query_params = st.query_params
-    selected_id = query_params.get("seat")
-    
-    if selected_id:
+    raw: Optional[str] = None
+
+    # Modern API (Streamlit ≥ 1.30)
+    try:
+        raw = st.query_params.get("seat")
+    except Exception:
+        # Legacy fallback
         try:
-            seat_id = int(selected_id)
-            selected_seat = next((s for s in all_seats if s["id"] == seat_id), None)
-            return selected_seat
-        except (ValueError, TypeError):
+            qp = st.experimental_get_query_params()  # type: ignore[attr-defined]
+            val = qp.get("seat")
+            if isinstance(val, list):
+                raw = val[0] if val else None
+            else:
+                raw = val
+        except Exception:
+            raw = None
+
+    if raw is None or raw == "":
+        return None
+
+    try:
+        seat_id = int(raw)
+    except (ValueError, TypeError):
+        return None
+
+    return next((s for s in all_seats if int(s.get("id", -1)) == seat_id), None)
+
+
+def clear_seat_selection() -> None:
+    """Remove the ``seat`` query param (e.g. after the user closes details)."""
+    try:
+        if "seat" in st.query_params:
+            del st.query_params["seat"]
+    except Exception:
+        try:
+            st.experimental_set_query_params()  # type: ignore[attr-defined]
+        except Exception:
             pass
-    
-    return None
