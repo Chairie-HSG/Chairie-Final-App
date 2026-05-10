@@ -1,6 +1,6 @@
 import streamlit as st
 
-def show_checkin(token: str, expected_seat_id, expected_seat_code:str, check_in_fn):
+def show_checkin(token, expected_seat_id, expected_seat_code, check_in_fn):
     """Render a simple text-based check-in UI inside a Streamlit page.
     The user types in the code printed on their physical seat.
     If it matches the reservation they can confirm check-in."""
