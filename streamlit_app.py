@@ -865,6 +865,21 @@ def main_app():
             unsafe_allow_html=True,
         )
 
+        # ── Zoom control ────────────────────────────────────────────────
+        # Discrete steps so reruns are predictable on touch devices. When
+        # zoom > 1, render_interactive_map crops around the currently-
+        # selected seat (or the image centre if no seat is selected).
+        zoom_level = st.select_slider(
+            "Map zoom",
+            options=[1.0, 1.5, 2.0, 2.5, 3.0],
+            value=1.0,
+            key="map_zoom_level",
+            format_func=lambda v: f"{v:g}×",
+            help="Zoom in to see seats more clearly. The view centres on "
+                 "your currently-selected seat (or the middle of the map "
+                 "if you haven't picked one yet).",
+        )
+
         clicked = render_interactive_map(
             merged_seats,
             selected_seat_id=st.session_state.get("selected_seat_id"),
@@ -874,9 +889,10 @@ def main_app():
             # The seat-layout JSON was authored on a downscaled 1300×848
             # canvas, so dots/clicks rescale to the natural image by ×1.38.
             # If you ever swap the floor plan image and dots stop aligning,
-            # re-run with `show_diagnostics=True` (and optionally re-add
-            # the slider UI from git history) to find the new values.
+            # re-run with `show_diagnostics=True` to find the new values.
             layout_canvas_size=(1300, 848),
+            zoom_level=zoom_level,
+            show_seat_label=True,
             show_diagnostics=False,
         )
 
