@@ -4,7 +4,7 @@ def show_checkin(token, expected_seat_id, expected_seat_code, check_in_fn):
     """Render a simple text-based check-in UI inside a Streamlit page.
     The user types in the code printed on their physical seat.
     If it matches the reservation they can confirm check-in."""
-    st.markdown ("### Check in")
+    st.markdown("### Check in")
     st.caption("Type the code printed on your seat to confirm you are there")
 
     #User types seat code
@@ -26,7 +26,7 @@ def show_checkin(token, expected_seat_id, expected_seat_code, check_in_fn):
         return
     
     #Confirm and check in
-    st.success(f"Code matches your reservation for seat {expected_seat_code} !")
+    st.success(f"Code matches your reservation for seat {expected_seat_code}!")
 
     #Confirm button so the user consciously completes check in
     if st.button("Confirm Check-in"):
