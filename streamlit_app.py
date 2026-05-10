@@ -865,51 +865,18 @@ def main_app():
             unsafe_allow_html=True,
         )
 
-        # ── Calibration UI ──────────────────────────────────────────────
-        # Drag the two sliders until the colored dots sit on top of the
-        # corresponding chairs in the floor plan. Once they line up, copy
-        # the values shown below into `layout_canvas_size=(W, H)` and turn
-        # `calibrate_map` off (or just delete this block).
-        calibrate_map = st.checkbox(
-            "🎯 Calibrate map alignment",
-            value=False,
-            key="calibrate_map_toggle",
-            help="Turn on temporarily to dial in dot positioning. "
-                 "Drag the sliders until the dots line up with the chairs, "
-                 "then copy the values into `layout_canvas_size` below and "
-                 "uncheck this box.",
-        )
-
-        if calibrate_map:
-            cal_c1, cal_c2 = st.columns(2)
-            with cal_c1:
-                cal_w = st.slider(
-                    "Canvas width",
-                    min_value=1100, max_value=1800, value=1280, step=2,
-                    key="cal_canvas_w",
-                )
-            with cal_c2:
-                cal_h = st.slider(
-                    "Canvas height",
-                    min_value=700, max_value=1200, value=834, step=2,
-                    key="cal_canvas_h",
-                )
-            st.code(
-                f"layout_canvas_size=({cal_w}, {cal_h})",
-                language="python",
-            )
-            active_canvas_size = (cal_w, cal_h)
-        else:
-            # Locked-in calibration. Replace these numbers with whatever
-            # the slider showed when dots aligned.
-            active_canvas_size = (1280, 834)
-
         clicked = render_interactive_map(
             merged_seats,
             selected_seat_id=st.session_state.get("selected_seat_id"),
             image_path=os.path.join(BASE_DIR, "Library_GFloor.jpg"),
             click_tolerance=22,
-            layout_canvas_size=active_canvas_size,
+            # Calibrated for the current Library_GFloor.jpg (1798×1171).
+            # The seat-layout JSON was authored on a downscaled 1300×848
+            # canvas, so dots/clicks rescale to the natural image by ×1.38.
+            # If you ever swap the floor plan image and dots stop aligning,
+            # re-run with `show_diagnostics=True` (and optionally re-add
+            # the slider UI from git history) to find the new values.
+            layout_canvas_size=(1300, 848),
             show_diagnostics=False,
         )
 
