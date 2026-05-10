@@ -155,18 +155,50 @@ def _hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
 # Rendering
 # ---------------------------------------------------------------------------
 
+def _get_label_font(size_px: int):
+    """Load a bold font for seat labels, with cross-platform fallbacks."""
+    from PIL import ImageFont
+
+    candidates = [
+        # Linux (incl. Streamlit Cloud)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        # macOS
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        # Windows
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/segoeuib.ttf",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size_px)
+        except (OSError, IOError):
+            continue
+    # Last-resort fallback: PIL's bundled bitmap font.
+    try:
+        return ImageFont.load_default(size=size_px)  # Pillow ≥ 10
+    except TypeError:
+        return ImageFont.load_default()
+
+
 def _draw_dots_on_image(
     base_img,                       # PIL.Image in RGBA
     seats_data: List[Dict],
     selected_seat_id: Optional[int],
     dot_radius_override: Optional[int],
     coord_scale: Tuple[float, float] = (1.0, 1.0),
+    show_seat_label: bool = True,
 ):
     """Composite anti-aliased seat dots onto a copy of the base image.
 
     ``coord_scale`` maps JSON layout coordinates to natural image pixels.
     A value of (1.0, 1.0) means JSON coords are already in natural-image
     pixel space; >1.0 means the JSON canvas was smaller than the image.
+
+    When ``show_seat_label`` is True and a seat is selected, its id is
+    rendered in a small floating label above the dot — useful as visual
+    confirmation of which seat the user just clicked.
 
     Dots are rendered on a 2× super-sampled overlay and downscaled with
     LANCZOS so the circles have smooth edges instead of the pixelated steps
@@ -180,6 +212,10 @@ def _draw_dots_on_image(
     od = ImageDraw.Draw(overlay)
     cs_x, cs_y = coord_scale
 
+    # Defer label rendering until after every dot is drawn so the label sits
+    # on top of any neighbouring dots (z-order matters when seats are dense).
+    selected_label: Optional[Tuple[int, int, int, str, Tuple[int, int, int]]] = None
+
     for seat in seats_data:
         try:
             sid = int(seat["id"])
@@ -188,7 +224,6 @@ def _draw_dots_on_image(
         except (KeyError, TypeError, ValueError):
             continue
 
-        # JSON layout coords → natural image pixels → 2× overlay pixels
         x_img = int(json_x * cs_x)
         y_img = int(json_y * cs_y)
 
@@ -197,8 +232,6 @@ def _draw_dots_on_image(
             dot_radius_override if dot_radius_override is not None
             else max(7, size // 2 + 2)
         )
-        # Scale dot radius with the coordinate scaling so dots stay
-        # proportionally sized when the JSON canvas was smaller.
         r_base = int(r_base * max(cs_x, cs_y))
         r = r_base * SCALE
         cx = x_img * SCALE
@@ -212,6 +245,8 @@ def _draw_dots_on_image(
                 outline=(26, 115, 232, 255),
                 width=3 * SCALE,
             )
+            # Stash label coords; render later.
+            selected_label = (cx, cy, r, str(sid), rgb)
 
         halo_r = r + 1 * SCALE
         od.ellipse(
@@ -222,6 +257,59 @@ def _draw_dots_on_image(
         od.ellipse(
             [cx - r, cy - r, cx + r, cy + r],
             fill=(rgb[0], rgb[1], rgb[2], 255),
+        )
+
+    # ── Seat label for the selected dot (drawn last → always on top) ──────
+    if selected_label is not None and show_seat_label:
+        cx, cy, r, label_text, _rgb = selected_label
+        # Font sized in the 2× overlay space; ~28 px in the final image.
+        font_px = int(56 * max(cs_x, cs_y))
+        font = _get_label_font(font_px)
+
+        # Measure text
+        try:
+            l, t, rgt, btm = od.textbbox((0, 0), label_text, font=font)
+            tw, th = rgt - l, btm - t
+        except AttributeError:
+            tw, th = font.getsize(label_text)  # pre-Pillow-10 fallback
+            l = t = 0
+
+        pad = 12 * SCALE
+        gap = 14 * SCALE
+        bg_w = tw + 2 * pad
+        bg_h = th + 2 * pad
+
+        # Place the label centered horizontally above the dot, with a small
+        # gap. If that would clip the top of the canvas, place it below.
+        bg_x = cx - bg_w // 2
+        bg_y = cy - r - gap - bg_h
+        if bg_y < 8 * SCALE:
+            bg_y = cy + r + gap
+
+        # Pill background
+        try:
+            od.rounded_rectangle(
+                [bg_x, bg_y, bg_x + bg_w, bg_y + bg_h],
+                radius=12 * SCALE,
+                fill=(255, 255, 255, 240),
+                outline=(26, 115, 232, 255),
+                width=int(2 * SCALE),
+            )
+        except AttributeError:
+            # Very old Pillow without rounded_rectangle
+            od.rectangle(
+                [bg_x, bg_y, bg_x + bg_w, bg_y + bg_h],
+                fill=(255, 255, 255, 240),
+                outline=(26, 115, 232, 255),
+                width=int(2 * SCALE),
+            )
+
+        # Text (Streamlit-blue, matches the selection ring)
+        od.text(
+            (bg_x + pad - l, bg_y + pad - t),
+            label_text,
+            fill=(26, 115, 232, 255),
+            font=font,
         )
 
     overlay = overlay.resize((base_w, base_h), Image.LANCZOS)
@@ -253,6 +341,8 @@ def render_interactive_map(
     layout_canvas_size: Optional[Tuple[int, int]] = None,
     click_tolerance: int = 25,
     dot_radius: Optional[int] = None,
+    zoom_level: float = 1.0,
+    show_seat_label: bool = True,
     show_diagnostics: bool = False,
     key: str = _DEFAULT_KEY,
 ) -> Optional[Dict]:
@@ -261,20 +351,22 @@ def render_interactive_map(
     Args:
         seats_data: list of seat dicts with at least ``id``, ``x``, ``y``,
             ``status``. ``size`` is honoured if present.
-        selected_seat_id: optional id of a seat to render with a blue ring.
+        selected_seat_id: optional id of a seat to render with a blue ring
+            and a small floating seat-number label.
         image_path: explicit path to the floor plan image. If omitted,
             common filenames in the script dir / cwd are tried.
         layout_canvas_size: ``(width, height)`` of the canvas the JSON
-            coordinates were authored against. If your editor exported
-            coords for an image that's a different size than your actual
-            ``Library_GFloor.jpg``, set this to the editor's canvas size
-            and the dots + clicks both rescale to match.
-            **Default ``None`` = assume JSON coords are in the natural
-            image's pixel space (no scaling).**
+            coordinates were authored against.
         click_tolerance: max pixel distance (in JSON layout pixels) from
             a click to a seat's center for that seat to count as clicked.
-        dot_radius: override dot radius (in JSON layout pixels). Default
-            ``size / 2 + 2`` per seat.
+        dot_radius: override dot radius (in JSON layout pixels).
+        zoom_level: 1.0 = no zoom (full image visible). Values > 1 zoom in
+            by cropping a window around the currently-selected seat (or
+            the image center if no seat is selected). Click coordinates
+            are translated back to the full image, so clicking on a dot
+            in the zoomed view selects it normally.
+        show_seat_label: whether to draw the seat-id label next to the
+            currently-selected dot.
         show_diagnostics: if True, render a small caption showing the
             image dimensions, JSON max coords, and the scale being applied
             — handy when calibrating ``layout_canvas_size``.
@@ -323,10 +415,6 @@ def render_interactive_map(
     natural_w, natural_h = base_img.size
 
     # ---- Resolve coordinate spaces ---------------------------------------
-    # JSON x/y values live in "layout canvas" coordinates. When the editor
-    # used the same image at natural size to author the layout, the layout
-    # canvas IS the natural image, no scaling needed. When the editor used
-    # a downscaled view, layout_canvas_size lets the caller specify it.
     if layout_canvas_size is not None:
         layout_w, layout_h = int(layout_canvas_size[0]), int(layout_canvas_size[1])
     else:
@@ -347,9 +435,6 @@ def render_interactive_map(
             f"scale: ×{coord_scale_x:.3f}, ×{coord_scale_y:.3f}"
         )
         if (max_jx < natural_w * 0.85 or max_jy < natural_h * 0.85) and layout_canvas_size is None:
-            # Suggest an aspect-matched canvas: fits all seats with a small
-            # right/bottom margin AND matches the image's aspect ratio,
-            # which is the right answer when the editor preserved aspect.
             json_aspect = (max_jx / max_jy) if max_jy else 0.0
             image_aspect = natural_w / natural_h
             sug_w = max_jx + 20
@@ -372,7 +457,39 @@ def render_interactive_map(
         selected_seat_id=selected_seat_id,
         dot_radius_override=dot_radius,
         coord_scale=(coord_scale_x, coord_scale_y),
+        show_seat_label=show_seat_label,
     )
+
+    # ---- Apply zoom (crop around the selected seat or image center) ------
+    crop_offset_x = 0
+    crop_offset_y = 0
+    zoom = max(1.0, float(zoom_level or 1.0))
+    if zoom > 1.001:
+        # Determine the natural-image pixel to keep centered.
+        center_nx, center_ny = natural_w / 2, natural_h / 2
+        if selected_seat_id is not None:
+            for s in seats_data:
+                try:
+                    if int(s.get("id", -1)) == int(selected_seat_id):
+                        center_nx = int(s.get("x", 0)) * coord_scale_x
+                        center_ny = int(s.get("y", 0)) * coord_scale_y
+                        break
+                except (TypeError, ValueError):
+                    pass
+
+        # Cropped window dimensions in natural image pixels
+        crop_w = max(1, int(natural_w / zoom))
+        crop_h = max(1, int(natural_h / zoom))
+
+        # Position crop, clamped to image bounds
+        left = int(round(center_nx - crop_w / 2))
+        top = int(round(center_ny - crop_h / 2))
+        left = max(0, min(left, natural_w - crop_w))
+        top = max(0, min(top, natural_h - crop_h))
+
+        rendered = rendered.crop((left, top, left + crop_w, top + crop_h))
+        crop_offset_x = left
+        crop_offset_y = top
 
     # ---- Show + capture clicks --------------------------------------------
     coords = streamlit_image_coordinates(
@@ -391,11 +508,12 @@ def render_interactive_map(
     if cx_disp is None or cy_disp is None or not disp_w or not disp_h:
         return None
 
-    # The component returns offsetX/offsetY in DISPLAYED-image pixels (not
-    # natural pixels). Convert: displayed → natural → JSON layout space, so
-    # we can compare with seat['x'], seat['y'] directly.
-    natural_click_x = cx_disp * (natural_w / disp_w)
-    natural_click_y = cy_disp * (natural_h / disp_h)
+    # Display → cropped natural → original natural → JSON layout space.
+    cropped_w, cropped_h = rendered.size
+    cropped_nat_x = cx_disp * (cropped_w / disp_w)
+    cropped_nat_y = cy_disp * (cropped_h / disp_h)
+    natural_click_x = cropped_nat_x + crop_offset_x
+    natural_click_y = cropped_nat_y + crop_offset_y
     json_click_x = natural_click_x / coord_scale_x
     json_click_y = natural_click_y / coord_scale_y
 
