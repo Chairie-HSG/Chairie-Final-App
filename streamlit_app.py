@@ -870,6 +870,14 @@ def main_app():
             selected_seat_id=st.session_state.get("selected_seat_id"),
             image_path=os.path.join(BASE_DIR, "Library_GFloor.jpg"),
             click_tolerance=22,
+            # Turn this OFF once dots line up correctly. While ON, a small
+            # caption appears under the map showing the image's natural
+            # dimensions vs. the JSON's coordinate range. Use those to set
+            # `layout_canvas_size=(W, H)` below if a mismatch is reported.
+            show_diagnostics=True,
+            # Uncomment + adjust if the diagnostics caption tells you the
+            # JSON canvas was smaller than the image:
+            # layout_canvas_size=(1300, 850),
         )
 
         if clicked is not None and clicked.get("id") != st.session_state.get("selected_seat_id"):
