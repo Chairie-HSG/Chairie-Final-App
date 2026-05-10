@@ -1,4 +1,4 @@
-import streamlit at st
+import streamlit as st
 from qr_code import show_checkin
 
 def fake_check_in(token, seat_id):
