@@ -60,8 +60,11 @@ _IMAGE_CANDIDATES = [
 ]
 
 # Status -> hex color
+# Both "available" (used by the static JSON export) and "free" (used by the
+# Supabase backend) are accepted as the green/bookable state.
 STATUS_COLORS: Dict[str, str] = {
     "available":   "#1db954",  # green
+    "free":        "#1db954",  # green (Supabase status name)
     "reserved":    "#ff9800",  # orange
     "occupied":    "#e53935",  # red
     "maintenance": "#9ca3af",  # gray
@@ -102,29 +105,47 @@ def _find_file(candidates: List[str], custom_path: Optional[str] = None) -> Opti
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_map_data(json_path: Optional[str] = None) -> Optional[Dict]:
+def load_map_data(
+    json_path: Optional[str] = None,
+    silent: bool = False,
+) -> Optional[Dict]:
     """Load the library map data JSON.
 
     Args:
-        json_path: optional explicit path. If omitted, tries the candidate
-            filenames above (script dir first, then cwd).
+        json_path: optional explicit path. If given and the file does not
+            exist, returns ``None`` (the candidate filenames are NOT tried
+            as a fallback when an explicit path was passed).
+        silent: if True, suppress error messages and just return ``None``
+            when the file isn't found / readable. Useful when probing for
+            an optional per-floor map JSON.
 
     Returns:
         The parsed dict (with keys like ``mapName``, ``totalSeats``,
         ``seats``), or ``None`` if nothing was found / readable.
     """
-    path = _find_file(_JSON_CANDIDATES, custom_path=json_path)
-    if not path:
-        st.error(
-            "Could not find library map data JSON. Looked for: "
-            + ", ".join(_JSON_CANDIDATES)
-        )
-        return None
+    if json_path is not None:
+        # Caller is being explicit — only try this exact path.
+        if not os.path.exists(json_path):
+            if not silent:
+                st.error(f"Map data not found: {json_path}")
+            return None
+        path: Optional[str] = json_path
+    else:
+        path = _find_file(_JSON_CANDIDATES)
+        if not path:
+            if not silent:
+                st.error(
+                    "Could not find library map data JSON. Looked for: "
+                    + ", ".join(_JSON_CANDIDATES)
+                )
+            return None
+
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        st.error(f"Error loading map data from {path}: {e}")
+        if not silent:
+            st.error(f"Error loading map data from {path}: {e}")
         return None
 
 
