@@ -346,15 +346,23 @@ def render_interactive_map(
             f"layout canvas: {layout_w}×{layout_h} • "
             f"scale: ×{coord_scale_x:.3f}, ×{coord_scale_y:.3f}"
         )
-        if (max_jx < natural_w * 0.8 or max_jy < natural_h * 0.8) and layout_canvas_size is None:
+        if (max_jx < natural_w * 0.85 or max_jy < natural_h * 0.85) and layout_canvas_size is None:
+            # Suggest an aspect-matched canvas: fits all seats with a small
+            # right/bottom margin AND matches the image's aspect ratio,
+            # which is the right answer when the editor preserved aspect.
+            json_aspect = (max_jx / max_jy) if max_jy else 0.0
+            image_aspect = natural_w / natural_h
+            sug_w = max_jx + 20
+            sug_h_aspect = int(round(sug_w / image_aspect))
+            sug_h_pad = max_jy + 20
+            aspect_match = abs(json_aspect - image_aspect) < 0.03
+            sug_h = sug_h_aspect if aspect_match else sug_h_pad
             st.info(
                 f"Heads up: JSON coords only span the upper-left "
                 f"≈{int(100 * max_jx / natural_w)}% × "
-                f"{int(100 * max_jy / natural_h)}% of the image. If dots "
-                f"don't sit on the chairs, your JSON was likely authored "
-                f"against a smaller canvas — try "
-                f"`layout_canvas_size=({max_jx + 20}, {max_jy + 20})` "
-                f"(or whatever size your editor used)."
+                f"{int(100 * max_jy / natural_h)}% of the image. "
+                f"{'The JSON aspect ratio matches the image, so the editor preserved aspect — ' if aspect_match else ''}"
+                f"try `layout_canvas_size=({sug_w}, {sug_h})`."
             )
 
     # ---- Draw dots --------------------------------------------------------
