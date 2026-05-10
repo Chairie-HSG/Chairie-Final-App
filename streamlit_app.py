@@ -21,21 +21,20 @@ from streamlit_autorefresh import st_autorefresh
 
 # ─────────────────────────────────────────────────────────────
 # INTERACTIVE MAP  (from interactive_map.py)
-# Graceful fallback: if the module is missing, the app still runs
-# with the legacy static-image + button-grid view.
+# Graceful fallback: if the module or its deps are missing, the app
+# still runs with the legacy static-image + button-grid view.
 # ─────────────────────────────────────────────────────────────
 try:
     from interactive_map import (
         load_map_data as load_layout_data,
         render_interactive_map,
-        handle_seat_selection,
         clear_seat_selection,
     )
     INTERACTIVE_MAP_AVAILABLE = True
 except Exception:
     INTERACTIVE_MAP_AVAILABLE = False
 
-    def clear_seat_selection():  # noqa: E306  (fallback no-op)
+    def clear_seat_selection(key=None):  # noqa: E306  (fallback no-op)
         try:
             if "seat" in st.query_params:
                 del st.query_params["seat"]
@@ -850,32 +849,32 @@ def main_app():
                 "status": (live or {}).get("status", "maintenance"),
             })
 
-        # Sync the URL ?seat=… param into session_state BEFORE we render the
-        # map, so the right dot is highlighted on this run.
-        clicked = handle_seat_selection(merged_seats)
-        if clicked is not None:
-            st.session_state["selected_seat_id"] = clicked["id"]
-
+        # Sync click -> session_state. The component returns the seat dict
+        # the user is currently clicked on (persists across reruns until
+        # they click somewhere else). When the selection changes we rerun
+        # so the highlight ring redraws around the new dot immediately.
         st.markdown(
             f"""
-            <div style="border:2px solid #1f4c66; border-radius:8px; padding:16px 16px 8px 16px;
-                        background:#fafafa; margin-bottom:24px;">
-              <div style="margin-bottom:10px; font-size:20px; font-weight:600; color:#444;">
-                Map — {floor_choice} <span style="font-weight:400; font-size:13px; color:#777;">
-                (click a dot to view seat details)</span>
-              </div>
+            <div style="margin-bottom:10px; font-size:20px; font-weight:600; color:#444;">
+              Map — {floor_choice}
+              <span style="font-weight:400; font-size:13px; color:#777;">
+                (click a dot to view seat details)
+              </span>
+            </div>
             """,
             unsafe_allow_html=True,
         )
 
-        render_interactive_map(
+        clicked = render_interactive_map(
             merged_seats,
             selected_seat_id=st.session_state.get("selected_seat_id"),
             image_path=os.path.join(BASE_DIR, "Library_GFloor.jpg"),
-            show_legend=False,  # we already render a legend above
+            click_tolerance=22,
         )
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        if clicked is not None and clicked.get("id") != st.session_state.get("selected_seat_id"):
+            st.session_state["selected_seat_id"] = clicked["id"]
+            st.rerun()
 
     else:
         # ── LEGACY FALLBACK: static image + button grid ─────────────────────
