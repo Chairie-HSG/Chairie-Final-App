@@ -1,15 +1,15 @@
 import streamlit as st
 from PIL import Image
 import numpy as np
-from pyzbar.pyzbar import decode as pyzbar_decode
+import cv2
 
 
 def decode_qr(image: Image.Image):
     """Decode a QR code from a PIL image. Returns the string or None."""
-    results = pyzbar_decode(image)
-    if results:
-        return results[0].data.decode("utf-8")
-    return None
+    arr = np.array(image)
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    data, _, _ = cv2QRCodeDetector().detectAndDecode(gray)
+    return data if data else None
 
 
 def extract_seat_code(qr_string: str):
