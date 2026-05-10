@@ -46,5 +46,4 @@ show_checkin(
     token="fake_token",
     expected_seat_id=42,
     expected_seat_code="A-14",
-    check_in_fn=fake_check_in,
-)
+    check_in_fn=fake_check_in)
