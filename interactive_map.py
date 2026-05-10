@@ -160,8 +160,13 @@ def _draw_dots_on_image(
     seats_data: List[Dict],
     selected_seat_id: Optional[int],
     dot_radius_override: Optional[int],
+    coord_scale: Tuple[float, float] = (1.0, 1.0),
 ):
     """Composite anti-aliased seat dots onto a copy of the base image.
+
+    ``coord_scale`` maps JSON layout coordinates to natural image pixels.
+    A value of (1.0, 1.0) means JSON coords are already in natural-image
+    pixel space; >1.0 means the JSON canvas was smaller than the image.
 
     Dots are rendered on a 2× super-sampled overlay and downscaled with
     LANCZOS so the circles have smooth edges instead of the pixelated steps
@@ -173,26 +178,33 @@ def _draw_dots_on_image(
     base_w, base_h = base_img.size
     overlay = Image.new("RGBA", (base_w * SCALE, base_h * SCALE), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
+    cs_x, cs_y = coord_scale
 
     for seat in seats_data:
         try:
             sid = int(seat["id"])
-            x = int(seat.get("x", 0))
-            y = int(seat.get("y", 0))
+            json_x = int(seat.get("x", 0))
+            json_y = int(seat.get("y", 0))
         except (KeyError, TypeError, ValueError):
             continue
+
+        # JSON layout coords → natural image pixels → 2× overlay pixels
+        x_img = int(json_x * cs_x)
+        y_img = int(json_y * cs_y)
 
         size = int(seat.get("size", 13))
         r_base = (
             dot_radius_override if dot_radius_override is not None
             else max(7, size // 2 + 2)
         )
+        # Scale dot radius with the coordinate scaling so dots stay
+        # proportionally sized when the JSON canvas was smaller.
+        r_base = int(r_base * max(cs_x, cs_y))
         r = r_base * SCALE
-        cx = x * SCALE
-        cy = y * SCALE
+        cx = x_img * SCALE
+        cy = y_img * SCALE
         rgb = _hex_to_rgb(get_seat_color(seat.get("status", "available")))
 
-        # Selection ring (drawn first, sits behind the dot)
         if sid == selected_seat_id:
             ring_r = r + 6 * SCALE
             od.ellipse(
@@ -201,14 +213,12 @@ def _draw_dots_on_image(
                 width=3 * SCALE,
             )
 
-        # White halo so the dot reads against any background
         halo_r = r + 1 * SCALE
         od.ellipse(
             [cx - halo_r, cy - halo_r, cx + halo_r, cy + halo_r],
             fill=(255, 255, 255, 255),
         )
 
-        # Coloured inner dot
         od.ellipse(
             [cx - r, cy - r, cx + r, cy + r],
             fill=(rgb[0], rgb[1], rgb[2], 255),
@@ -240,16 +250,13 @@ def render_interactive_map(
     seats_data: List[Dict],
     selected_seat_id: Optional[int] = None,
     image_path: Optional[str] = None,
+    layout_canvas_size: Optional[Tuple[int, int]] = None,
     click_tolerance: int = 25,
     dot_radius: Optional[int] = None,
+    show_diagnostics: bool = False,
     key: str = _DEFAULT_KEY,
 ) -> Optional[Dict]:
     """Render the interactive floor map and return any clicked seat.
-
-    The floor plan is shown at full natural resolution (responsively scaled
-    to the column width). Dots are drawn into the image bitmap at exact
-    JSON pixel coordinates, so they always line up with the seats in the
-    plan — no SVG aspect-ratio drift.
 
     Args:
         seats_data: list of seat dicts with at least ``id``, ``x``, ``y``,
@@ -257,17 +264,26 @@ def render_interactive_map(
         selected_seat_id: optional id of a seat to render with a blue ring.
         image_path: explicit path to the floor plan image. If omitted,
             common filenames in the script dir / cwd are tried.
-        click_tolerance: max pixel distance (in image-natural pixels) from
-            a click to a dot center for that dot to count as clicked.
-        dot_radius: override dot radius (in image pixels). Default
+        layout_canvas_size: ``(width, height)`` of the canvas the JSON
+            coordinates were authored against. If your editor exported
+            coords for an image that's a different size than your actual
+            ``Library_GFloor.jpg``, set this to the editor's canvas size
+            and the dots + clicks both rescale to match.
+            **Default ``None`` = assume JSON coords are in the natural
+            image's pixel space (no scaling).**
+        click_tolerance: max pixel distance (in JSON layout pixels) from
+            a click to a seat's center for that seat to count as clicked.
+        dot_radius: override dot radius (in JSON layout pixels). Default
             ``size / 2 + 2`` per seat.
-        key: Streamlit session_state key for the click component. Use
-            different keys when rendering multiple maps in one app.
+        show_diagnostics: if True, render a small caption showing the
+            image dimensions, JSON max coords, and the scale being applied
+            — handy when calibrating ``layout_canvas_size``.
+        key: Streamlit session_state key for the click component.
 
     Returns:
         The seat dict the user clicked on (persists across reruns until
-        they click somewhere else), or None if no click has landed on a
-        seat yet, or the click was outside ``click_tolerance`` of any dot.
+        they click somewhere else), or None if no click has landed within
+        ``click_tolerance`` of any dot yet.
     """
     if not seats_data:
         st.warning("No seat data available.")
@@ -293,7 +309,7 @@ def render_interactive_map(
         )
         return None
 
-    # ---- Build the image with dots overlaid -------------------------------
+    # ---- Load floor plan --------------------------------------------------
     img_file = _find_file(_IMAGE_CANDIDATES, custom_path=image_path)
     if img_file:
         try:
@@ -304,17 +320,53 @@ def render_interactive_map(
     else:
         base_img = _build_blank_canvas(seats_data)
 
+    natural_w, natural_h = base_img.size
+
+    # ---- Resolve coordinate spaces ---------------------------------------
+    # JSON x/y values live in "layout canvas" coordinates. When the editor
+    # used the same image at natural size to author the layout, the layout
+    # canvas IS the natural image, no scaling needed. When the editor used
+    # a downscaled view, layout_canvas_size lets the caller specify it.
+    if layout_canvas_size is not None:
+        layout_w, layout_h = int(layout_canvas_size[0]), int(layout_canvas_size[1])
+    else:
+        layout_w, layout_h = natural_w, natural_h
+
+    layout_w = max(1, layout_w)
+    layout_h = max(1, layout_h)
+    coord_scale_x = natural_w / layout_w
+    coord_scale_y = natural_h / layout_h
+
+    if show_diagnostics:
+        max_jx = max(int(s.get("x", 0)) for s in seats_data)
+        max_jy = max(int(s.get("y", 0)) for s in seats_data)
+        st.caption(
+            f"🔧 image natural: {natural_w}×{natural_h} px • "
+            f"JSON max coords: {max_jx}×{max_jy} • "
+            f"layout canvas: {layout_w}×{layout_h} • "
+            f"scale: ×{coord_scale_x:.3f}, ×{coord_scale_y:.3f}"
+        )
+        if (max_jx < natural_w * 0.8 or max_jy < natural_h * 0.8) and layout_canvas_size is None:
+            st.info(
+                f"Heads up: JSON coords only span the upper-left "
+                f"≈{int(100 * max_jx / natural_w)}% × "
+                f"{int(100 * max_jy / natural_h)}% of the image. If dots "
+                f"don't sit on the chairs, your JSON was likely authored "
+                f"against a smaller canvas — try "
+                f"`layout_canvas_size=({max_jx + 20}, {max_jy + 20})` "
+                f"(or whatever size your editor used)."
+            )
+
+    # ---- Draw dots --------------------------------------------------------
     rendered = _draw_dots_on_image(
         base_img,
         seats_data,
         selected_seat_id=selected_seat_id,
         dot_radius_override=dot_radius,
+        coord_scale=(coord_scale_x, coord_scale_y),
     )
 
     # ---- Show + capture clicks --------------------------------------------
-    # streamlit-image-coordinates returns click coords in the image's
-    # natural pixel space regardless of the displayed size, so our
-    # click→seat lookup needs no scaling.
     coords = streamlit_image_coordinates(
         rendered,
         key=key,
@@ -324,18 +376,28 @@ def render_interactive_map(
     if not coords:
         return None
 
-    cx = coords.get("x")
-    cy = coords.get("y")
-    if cx is None or cy is None:
+    cx_disp = coords.get("x")
+    cy_disp = coords.get("y")
+    disp_w = coords.get("width")
+    disp_h = coords.get("height")
+    if cx_disp is None or cy_disp is None or not disp_w or not disp_h:
         return None
 
-    # Find nearest seat
+    # The component returns offsetX/offsetY in DISPLAYED-image pixels (not
+    # natural pixels). Convert: displayed → natural → JSON layout space, so
+    # we can compare with seat['x'], seat['y'] directly.
+    natural_click_x = cx_disp * (natural_w / disp_w)
+    natural_click_y = cy_disp * (natural_h / disp_h)
+    json_click_x = natural_click_x / coord_scale_x
+    json_click_y = natural_click_y / coord_scale_y
+
+    # ---- Find nearest seat ------------------------------------------------
     nearest: Optional[Dict] = None
     min_d2 = float("inf")
     for seat in seats_data:
         try:
-            dx = int(seat.get("x", 0)) - cx
-            dy = int(seat.get("y", 0)) - cy
+            dx = int(seat.get("x", 0)) - json_click_x
+            dy = int(seat.get("y", 0)) - json_click_y
         except (TypeError, ValueError):
             continue
         d2 = dx * dx + dy * dy
@@ -346,6 +408,31 @@ def render_interactive_map(
     if nearest is not None and min_d2 <= click_tolerance * click_tolerance:
         return nearest
     return None
+
+
+def get_image_dimensions(image_path: Optional[str] = None) -> Optional[Tuple[int, int]]:
+    """Return ``(width, height)`` of the floor plan image, or None if missing.
+
+    Useful for figuring out what to pass as ``layout_canvas_size``: from
+    a Streamlit cell, run
+
+        from interactive_map import get_image_dimensions
+        st.write(get_image_dimensions())
+
+    and compare to the ``JSON max coords`` line in the diagnostics caption.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    path = _find_file(_IMAGE_CANDIDATES, custom_path=image_path)
+    if not path:
+        return None
+    try:
+        with Image.open(path) as img:
+            return img.size
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
