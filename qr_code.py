@@ -1,6 +1,5 @@
 import streamlit as st
 from PIL import Image
-import numpy as np
 
 
 
@@ -8,13 +7,37 @@ def decode_qr(image: Image.Image):
     """Decode a QR code from a PIL image. Returns the string or None."""
     try:
         import cv2
+        import numpy as np
+
         arr = np.array(image)
         gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+
+        #Try 1: normal detection
         data, _, _ = cv2QRCodeDetector().detectAndDecode(gray)
-        return data if data else None
+        if data:
+            return data
+        
+        # Try 2: increase contrast
+        gray = cv2.equalizeHist(gray)
+        data, _, _ = cv2.QRCodeDetector().detectAndDecode(gray)
+        if data:
+            return data
+        
+        # Try 3: blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        data, _, _ = cv2.QRCodeDetector().detectAndDecode(blurred)
+        if data:
+            return data
+        
+        # Try 4: threshold to make it pure black and white
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        data, _, _ = cv2.QRCodeDetector().detectAndDecode(thresh)
+        if data:
+            return data
+            
+        return None
     except Exception:
         return None
-
 
 def extract_seat_code(qr_string: str):
     """Extract seat code from QR string. 'SEAT:A-14' or 'A-14' -> 'A-14'."""
