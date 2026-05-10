@@ -38,12 +38,3 @@ def show_checkin(token, expected_seat_id, expected_seat_code, check_in_fn):
         else:
             st.error(result["message"])
 
-#test run lol
-def fake_check_in(token, seat_id):
-    return {"success": True, "message": f"Checked in to seat {seat_id}!"}
-
-show_checkin(
-    token="fake_token",
-    expected_seat_id=42,
-    expected_seat_code="A-14",
-    check_in_fn=fake_check_in)
