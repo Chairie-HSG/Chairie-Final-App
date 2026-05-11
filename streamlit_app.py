@@ -43,6 +43,26 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────
+# VISUAL SHELL
+# ─────────────────────────────────────────────────────────────
+def _inject_app_shell():
+    """Load the global CSS shell (app_styles.html) into the page.
+
+    Called once at the top of main_app(). The login page has its own
+    self-contained Google-style theme and intentionally does not load
+    this shell.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "app_styles.html")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            st.markdown(f.read(), unsafe_allow_html=True)
+    except FileNotFoundError:
+        # Shell missing → fall back to Streamlit's default look.
+        pass
+
+
+# ─────────────────────────────────────────────────────────────
 # PER-FLOOR MAP CONFIGURATION
 # ─────────────────────────────────────────────────────────────
 # Each entry tells the map renderer what to load for that floor:
@@ -57,19 +77,15 @@ FLOOR_CONFIG = {
     "Ground Floor": {
         "json_path":          None,
         "image_filename":     "Library_GFloor.jpg",
-        "layout_canvas_size": (1300, 848),    # calibrated
+        "layout_canvas_size": (1300, 848),
         "show_diagnostics":   False,
         "map_key":            "library_map_chart_ground",
     },
     "Floor 1": {
         "json_path":          "library_map_data_floor1.json",
         "image_filename":     "Library_1Floor.jpg",
-        # Initial guess: max-coord + 20 in each dim. Diagnostics are ON
-        # so the caption tells you what to change this to if dots don't
-        # land on the chairs. Once calibrated, paste the right numbers
-        # here and flip show_diagnostics back to False.
-        "layout_canvas_size": (1365, 1023),
-        "show_diagnostics":   True,
+        "layout_canvas_size": (1351, 1011),
+        "show_diagnostics":   False,
         "map_key":            "library_map_chart_floor1",
     },
 }
@@ -737,44 +753,57 @@ def _render_seat_detail_panel(seats, token):
     st.session_state["selected_seat_id"] to decide what to show.
     """
     st.markdown(
-        """
-        <div id="seat-details-section">
-          <div style="font-size:20px; font-weight:600; margin-bottom:14px; color:#444;">
-            Seat Details
+        '<div class="chairie-eyebrow">Seat details</div>',
+        unsafe_allow_html=True,
+    )
+
+    selected_id = st.session_state.get("selected_seat_id")
+    if not selected_id:
+        st.markdown(
+            '<div class="chairie-empty-detail">'
+            'Click a dot on the map below to see <strong>seat details</strong> '
+            'and reserve it.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    seat = next((s for s in seats if s["id"] == selected_id), None)
+    if not seat:
+        st.markdown(
+            '<div class="chairie-empty-detail">'
+            'Selected seat is not on this floor or no longer available.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    status_class = (seat["status"] or "maintenance").lower()
+    st.markdown(
+        f"""
+        <div class="chairie-seat-detail">
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Seat</span>
+            <span class="chairie-seat-value">{seat['code']}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Building</span>
+            <span class="chairie-seat-value">{seat['building']}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Floor</span>
+            <span class="chairie-seat-value">{seat['floor']}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Status</span>
+            <span class="chairie-status-pill {status_class}">{seat['status']}</span>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    selected_id = st.session_state.get("selected_seat_id")
-    if not selected_id:
-        st.info("Click a seat on the map below to see details and reserve it.")
-        return
-
-    seat = next((s for s in seats if s["id"] == selected_id), None)
-    if not seat:
-        st.warning("Selected seat not found.")
-        return
-
-    st.markdown(
-        f"""
-        <div style="background:#eef5f8; border-radius:10px; padding:16px; font-size:15px;
-                    margin-bottom:16px;">
-          <strong>Seat:</strong> {seat['code']}<br>
-          <strong>Building:</strong> {seat['building']}<br>
-          <strong>Floor:</strong> {seat['floor']}<br>
-          <strong>Status:</strong>
-          <span style="color:{seat_status_color(seat['status'])}; font-weight:700;">
-            {seat['status'].upper()}
-          </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     if seat["status"] == "free":
-        st.success("This seat is free.")
         if st.button("Reserve this seat (10 min)", key=f"reserve_{seat['id']}"):
             result = reserve_seat(token, seat["id"])
             if result["success"]:
@@ -786,8 +815,10 @@ def _render_seat_detail_panel(seats, token):
 
     elif seat["status"] == "reserved":
         if seat["reserved_by_me"]:
-            st.warning("This seat is reserved by you.")
-            st.info(f"Time left to check in: {countdown(seat['reserved_until'])}")
+            st.warning(
+                f"This seat is reserved by you. "
+                f"Time left to check in: {countdown(seat['reserved_until'])}"
+            )
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Simulate QR / Check In", key=f"checkin_{seat['id']}"):
@@ -798,7 +829,11 @@ def _render_seat_detail_panel(seats, token):
                     else:
                         st.error(result["message"])
             with c2:
-                if st.button("Cancel Reservation", key=f"cancel_{seat['id']}"):
+                if st.button(
+                    "Cancel Reservation",
+                    key=f"cancel_{seat['id']}",
+                    type="secondary",
+                ):
                     result = cancel_reservation(token)
                     if result["success"]:
                         st.success(result["message"])
@@ -811,8 +846,10 @@ def _render_seat_detail_panel(seats, token):
 
     elif seat["status"] == "occupied":
         if seat["occupied_by_me"]:
-            st.success("You are currently occupying this seat.")
-            st.info(f"Re-check countdown: {countdown(seat['occupied_until'])}")
+            st.success(
+                f"You are currently occupying this seat. "
+                f"Re-check countdown: {countdown(seat['occupied_until'])}"
+            )
             if st.button("Release Seat", key=f"release_{seat['id']}"):
                 result = release_current_seat(token)
                 if result["success"]:
@@ -827,37 +864,37 @@ def _render_seat_detail_panel(seats, token):
 def main_app():
     require_login()
 
-    # Auto-refresh every second (countdowns update live — from app.py)
+    # Auto-refresh every 30s (countdowns and seat statuses update live)
     st_autorefresh(interval=30000, key="seat_refresh")
+
+    # Inject the global CSS shell once per page render.
+    _inject_app_shell()
 
     token = st.session_state["token"]
 
-    # ── Top bar (indexnew.html) ──
+    # ── Top bar ──────────────────────────────────────────────────────────
     st.markdown(
         f"""
-        <div style="display:flex; justify-content:space-between; align-items:center;
-                    padding-bottom:18px; border-bottom:2px solid #2b6f95; margin-bottom:24px;
-                    background:#fff; border-radius:0;">
-          <div style="font-size:28px; font-weight:bold; color:#0a8f4d;">HSG</div>
-          <div style="font-size:15px; color:#333; font-weight:500;">
-            Home / Main Map Page
+        <div class="chairie-topbar">
+          <div class="chairie-brand">
+            <span class="chairie-brand-mark">C</span>
+            <span>Chairie</span>
           </div>
-          <div style="font-size:16px; font-weight:500; color:#333;">
-            👤 {st.session_state['username']}
-          </div>
+          <div class="chairie-page-label">Library Map</div>
+          <div class="chairie-user">{st.session_state['username']}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Logout button (top-right area)
-    if st.button("Logout", key="logout_btn"):
-        logout_user()
-        st.rerun()
+    # Logout (right-aligned via a thin column trick)
+    _, _, c_logout = st.columns([6, 6, 2])
+    with c_logout:
+        if st.button("Logout", key="logout_btn", type="secondary"):
+            logout_user()
+            st.rerun()
 
-    st.markdown("<div style='margin-bottom:6px;'></div>", unsafe_allow_html=True)
-
-    # ── User status banner (from app.py render_user_status) ──
+    # ── User status banner ───────────────────────────────────────────────
     status_result = get_user_status(token)
     if status_result.get("success"):
         reserved_seat = status_result.get("reserved_seat")
@@ -876,7 +913,7 @@ def main_app():
                 f"⏱ {countdown(checked_in_seat['occupied_until'])} left"
             )
 
-    # ── Fetch seats from Supabase ──
+    # ── Fetch seats from Supabase ────────────────────────────────────────
     seats_result = get_seats(token)
     if not seats_result.get("success"):
         st.error(seats_result.get("message", "Could not fetch seats."))
@@ -884,56 +921,70 @@ def main_app():
 
     seats = seats_result["seats"]
 
-    # ── Floor selector (indexnew.html) ──
-    floor_choice = st.selectbox(
-        "Select Floor",
-        options=["Ground Floor", "Floor 1"],
-        index=0,
-        key="floor_selector",
+    # ── Floor filter ─────────────────────────────────────────────────────
+    # Use strict per-floor filtering when ANY seat has a floor field, so
+    # selecting Floor 1 never falls back to Ground Floor's seats. Only fall
+    # back to "show all" if the database has no floor information at all
+    # (legacy case).
+    has_floor_field = any(
+        s.get("floor") is not None and s.get("floor") != "" for s in seats
     )
 
-    # Filter seats by floor
+    # ── Toolbar row above the map: floor selector + free count + legend ──
+    tcol1, tcol2, tcol3 = st.columns([2, 2, 5])
+    with tcol1:
+        floor_choice = st.selectbox(
+            "Floor",
+            options=list(FLOOR_CONFIG.keys()),
+            index=0,
+            key="floor_selector",
+            label_visibility="visible",
+        )
+
     floor_number = "0" if floor_choice == "Ground Floor" else "1"
-    floor_seats = [s for s in seats if str(s.get("floor", "")) == floor_number]
-    if not floor_seats:
-        floor_seats = seats  # fallback: show all if floor field not set
+    if has_floor_field:
+        floor_seats = [s for s in seats if str(s.get("floor", "")) == floor_number]
+    else:
+        floor_seats = seats
 
-    # ── Availability dot + count (indexnew.html) ──
     free_count = sum(1 for s in floor_seats if s["status"] == "free")
-    st.markdown(
-        f"""
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;
-                    font-size:18px; font-weight:600;">
-          <span style="width:14px; height:14px; border-radius:50%; background:#1db954;
-                       display:inline-block;"></span>
-          <span>{free_count} free seats on {floor_choice}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    # ── Legend (indexnew.html) ──
-    st.markdown(
-        """
-        <div style="display:flex; align-items:center; gap:20px; margin-bottom:20px;
-                    font-size:15px; flex-wrap:wrap;">
-          <span>Legend:</span>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="width:14px; height:14px; border-radius:50%; background:#1db954;
-                         display:inline-block;"></span><span>Free</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="width:14px; height:14px; border-radius:50%; background:#ff9800;
-                         display:inline-block;"></span><span>Reserved</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="width:14px; height:14px; border-radius:50%; background:#e53935;
-                         display:inline-block;"></span><span>Occupied</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    with tcol2:
+        st.markdown(
+            f"""
+            <div class="chairie-stat" style="margin-top: 26px;">
+              <span class="chairie-stat-dot"></span>
+              <div class="chairie-stat-text">
+                <span class="chairie-stat-number">{free_count}</span>
+                <span class="chairie-stat-label">free on {floor_choice}</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with tcol3:
+        st.markdown(
+            """
+            <div class="chairie-legend" style="margin-top: 26px;">
+              <span style="color: var(--text-tertiary); font-weight: 600;
+                           text-transform: uppercase; letter-spacing: 0.06em;
+                           font-size: 11px;">Legend</span>
+              <span class="chairie-legend-item">
+                <span class="chairie-legend-dot legend-free"></span>Free
+              </span>
+              <span class="chairie-legend-item">
+                <span class="chairie-legend-dot legend-reserved"></span>Reserved
+              </span>
+              <span class="chairie-legend-item">
+                <span class="chairie-legend-dot legend-occupied"></span>Occupied
+              </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='margin-bottom: 14px;'></div>", unsafe_allow_html=True)
 
     # ── Map: interactive (clickable dots) if JSON layout exists, else legacy image+grid ──
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -998,11 +1049,9 @@ def main_app():
         # ── Map header + interactive map ────────────────────────────────
         st.markdown(
             f"""
-            <div style="margin: 18px 0 10px 0; font-size:20px; font-weight:600; color:#444;">
+            <div class="chairie-section-title">
               Map — {floor_choice}
-              <span style="font-weight:400; font-size:13px; color:#777;">
-                (hover a dot for info, click to select, scroll/pinch to zoom)
-              </span>
+              <span class="hint">hover a dot for info, click to select, scroll/pinch to zoom</span>
             </div>
             """,
             unsafe_allow_html=True,
