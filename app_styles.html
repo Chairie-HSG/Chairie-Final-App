@@ -1,0 +1,385 @@
+<!--
+    app_styles.html
+    ─────────────────────────────────────────────────────────────
+    Global visual shell for the main (post-login) part of Chairie.
+
+    This file is loaded once at the top of main_app() via
+    st.markdown(..., unsafe_allow_html=True). It contains a single
+    <style> block that:
+
+      1. Defines design tokens (colors, spacing, radii) as CSS variables.
+      2. Styles plain HTML elements emitted by st.markdown blocks.
+      3. Overrides a few Streamlit widget defaults so buttons,
+         alerts and selectboxes feel like part of the same UI.
+
+    Design intent: calm, university-grade, minimal. Soft off-white
+    page background, white cards with very subtle shadows, a single
+    accent green (Chairie brand) reserved for primary actions and
+    "free" status indicators.
+-->
+<style>
+  :root {
+    /* Brand */
+    --chairie-green:        #0a8f4d;
+    --chairie-green-hover:  #087a40;
+    --chairie-navy:         #1f4c66;
+
+    /* Status colours (same hex as the dots on the map) */
+    --status-free:          #1db954;
+    --status-reserved:      #ff9800;
+    --status-occupied:      #e53935;
+    --status-maintenance:   #9ca3af;
+
+    /* Neutrals */
+    --bg-page:              #f7f8fa;
+    --bg-card:              #ffffff;
+    --bg-subtle:            #f1f3f5;
+
+    --border-soft:          #e5e7eb;
+    --border-strong:        #d1d5db;
+
+    --text-primary:         #111827;
+    --text-secondary:       #4b5563;
+    --text-tertiary:        #9ca3af;
+
+    /* Elevation */
+    --shadow-xs:  0 1px 2px rgba(17, 24, 39, 0.04);
+    --shadow-sm:  0 1px 3px rgba(17, 24, 39, 0.06), 0 1px 2px rgba(17, 24, 39, 0.04);
+    --shadow-md:  0 4px 12px rgba(17, 24, 39, 0.06), 0 2px 4px rgba(17, 24, 39, 0.04);
+
+    /* Shape */
+    --radius-xs:  4px;
+    --radius-sm:  6px;
+    --radius-md:  10px;
+    --radius-lg:  14px;
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     Page-level
+     ────────────────────────────────────────────────────────────*/
+  .stApp {
+    background-color: var(--bg-page);
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
+                 Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--text-primary);
+  }
+
+  /* Hide Streamlit's default chrome */
+  #MainMenu       { visibility: hidden; }
+  footer          { visibility: hidden; }
+  header          { background: transparent !important; }
+
+  /* Constrain the main column on very wide screens, but stay
+     wide enough to show the floor plan at a comfortable size */
+  .main .block-container {
+    max-width:        1400px;
+    padding-top:      1.4rem;
+    padding-bottom:   3rem;
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     Top bar
+     ────────────────────────────────────────────────────────────*/
+  .chairie-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 22px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-xs);
+    margin-bottom: 22px;
+  }
+  .chairie-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--chairie-green);
+    letter-spacing: -0.01em;
+  }
+  .chairie-brand-mark {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    background: var(--chairie-green);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .chairie-page-label {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .chairie-user {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--bg-subtle);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .chairie-user::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--status-free);
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     Section titles + hints
+     ────────────────────────────────────────────────────────────*/
+  .chairie-section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    margin: 18px 0 12px 0;
+  }
+  .chairie-section-title .hint {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    margin-left: 8px;
+  }
+  .chairie-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     Cards (used for status banners + seat detail panel)
+     ────────────────────────────────────────────────────────────*/
+  .chairie-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 18px 22px;
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     Toolbar row above the map (floor selector / free count / legend)
+     ────────────────────────────────────────────────────────────*/
+  .chairie-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-xs);
+    height: 100%;
+    box-sizing: border-box;
+  }
+  .chairie-stat-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--status-free);
+    flex-shrink: 0;
+  }
+  .chairie-stat-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+  }
+  .chairie-stat-number {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .chairie-stat-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .chairie-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-xs);
+    font-size: 13px;
+    color: var(--text-secondary);
+    height: 100%;
+    box-sizing: border-box;
+  }
+  .chairie-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chairie-legend-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+  }
+  .legend-free      { background: var(--status-free); }
+  .legend-reserved  { background: var(--status-reserved); }
+  .legend-occupied  { background: var(--status-occupied); }
+
+  /* ────────────────────────────────────────────────────────────
+     Seat detail panel
+     ────────────────────────────────────────────────────────────*/
+  .chairie-seat-detail {
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    padding: 18px 22px;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 14px;
+  }
+  .chairie-seat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    font-size: 14px;
+    border-bottom: 1px dashed transparent;
+  }
+  .chairie-seat-row + .chairie-seat-row {
+    border-top: 1px dashed var(--border-soft);
+  }
+  .chairie-seat-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+  .chairie-seat-value {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  .chairie-status-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .chairie-status-pill.free        { background: #e7f5ec; color: #137c44; }
+  .chairie-status-pill.reserved    { background: #fff3e0; color: #b45309; }
+  .chairie-status-pill.occupied    { background: #fde8e8; color: #b71c1c; }
+  .chairie-status-pill.maintenance { background: #f1f3f5; color: #4b5563; }
+
+  .chairie-empty-detail {
+    background: var(--bg-card);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: 22px 24px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  .chairie-empty-detail strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     Streamlit overrides — buttons, alerts, selectbox
+     ────────────────────────────────────────────────────────────*/
+
+  /* Primary buttons (st.button default) */
+  .stButton > button {
+    background: var(--chairie-green) !important;
+    color: #ffffff !important;
+    border: 1px solid var(--chairie-green) !important;
+    border-radius: var(--radius-sm) !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    padding: 8px 18px !important;
+    transition: background-color 0.12s ease, transform 0.05s ease,
+                box-shadow 0.12s ease;
+    box-shadow: var(--shadow-xs);
+  }
+  .stButton > button:hover {
+    background: var(--chairie-green-hover) !important;
+    border-color: var(--chairie-green-hover) !important;
+    box-shadow: var(--shadow-sm);
+  }
+  .stButton > button:active {
+    transform: translateY(1px);
+    box-shadow: none;
+  }
+  .stButton > button:focus,
+  .stButton > button:focus:not(:active) {
+    border-color: var(--chairie-green) !important;
+    box-shadow: 0 0 0 3px rgba(10, 143, 77, 0.18) !important;
+    color: #ffffff !important;
+  }
+
+  /* Secondary buttons via type="secondary" */
+  .stButton > button[kind="secondary"] {
+    background: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-strong) !important;
+  }
+  .stButton > button[kind="secondary"]:hover {
+    background: var(--bg-subtle) !important;
+    border-color: var(--border-strong) !important;
+  }
+  .stButton > button[kind="secondary"]:focus,
+  .stButton > button[kind="secondary"]:focus:not(:active) {
+    box-shadow: 0 0 0 3px rgba(31, 76, 102, 0.15) !important;
+    color: var(--text-primary) !important;
+  }
+
+  /* Alert boxes — softer + rounder */
+  .stAlert {
+    border-radius: var(--radius-md) !important;
+    border: 1px solid var(--border-soft) !important;
+    box-shadow: var(--shadow-xs);
+  }
+
+  /* Selectbox – match the card aesthetic */
+  .stSelectbox [data-baseweb="select"] > div {
+    background: var(--bg-card) !important;
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--border-strong) !important;
+    min-height: 40px !important;
+  }
+  .stSelectbox label {
+    font-size: 13px !important;
+    color: var(--text-secondary) !important;
+    font-weight: 500 !important;
+  }
+
+  /* Plotly chart — give it a card frame to match the rest of the UI */
+  .stPlotlyChart {
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 8px;
+    margin-bottom: 24px;
+  }
+
+  /* Captions and small text under widgets */
+  .stCaption, .stMarkdown p {
+    color: var(--text-secondary);
+  }
+</style>
