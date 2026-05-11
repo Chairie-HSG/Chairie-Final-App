@@ -84,7 +84,7 @@ FLOOR_CONFIG = {
     "Floor 1": {
         "json_path":          "library_map_data_floor1.json",
         "image_filename":     "Library_1Floor.jpg",
-        "layout_canvas_size": (1351, 1011),
+        "layout_canvas_size": (1365, 1015),
         "show_diagnostics":   False,
         "map_key":            "library_map_chart_floor1",
     },
