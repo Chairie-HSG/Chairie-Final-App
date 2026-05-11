@@ -519,28 +519,32 @@ def seat_status_color(status):
 # ─────────────────────────────────────────────────────────────
 
 def login_page():
-    # ── Google-style CSS ──
+    """
+    Defining the login page for the website.
+    This function creates a login and signup interface. It adds CSS for styling, displays app logo (top middle), switches between login and signup mode, validates the user input and calls the backend functions for logging in or creating a new account.
+    """
+    # Now we are switching to CSS, to start with the design of the website.
     st.markdown(
         """
         <style>
-        /* Hide default Streamlit chrome for a cleaner look */
+        /* Hide default Streamlit elements so the page looks cleaner */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         header {visibility: hidden;}
 
-        /* Page background */
+        /* Making the app background white */
         .stApp {
             background-color: #ffffff;
         }
 
-        /* Center column width */
+        /* Giving space at top and bottom and limits the page width so the login form does not stretch across the whole width */
         .block-container {
             padding-top: 3rem;
             padding-bottom: 3rem;
             max-width: 500px;
         }
 
-        /* Title and subtitle */
+        /* Styling the main title */
         .login-title {
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 24px;
@@ -550,6 +554,7 @@ def login_page():
             margin-top: 8px;
             margin-bottom: 8px;
         }
+        /* Styling subtitle below the title*/
         .login-subtitle {
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 16px;
@@ -559,7 +564,7 @@ def login_page():
             margin-bottom: 28px;
         }
 
-        /* The form itself acts as the card */
+        /* Styling the streamlit form so it looks like a card */
         div[data-testid="stForm"] {
             border: 1px solid #dadce0;
             border-radius: 8px;
@@ -567,7 +572,7 @@ def login_page():
             background: #ffffff;
         }
 
-        /* Inputs — Google's outlined style */
+        /* Styling email and password input fields */
         .stTextInput > div > div > input {
             height: 52px !important;
             border-radius: 4px !important;
@@ -581,13 +586,14 @@ def login_page():
             box-shadow: none !important;
             outline: none !important;
         }
+        /*Styling the labels of the input fields*/
         .stTextInput label {
             font-size: 13px !important;
             color: #5f6368 !important;
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif !important;
         }
 
-        /* Tagline (replaces the guest-mode block) */
+        /* Styling small tagline below the input fields */
         .tagline {
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif;
             font-size: 14px;
@@ -597,12 +603,13 @@ def login_page():
             margin-bottom: 8px;
             text-align: left;
         }
+        /*Making word "Chairie" in the tagline slightly darker so it stands out*/
         .tagline strong {
             color: #202124;
             font-weight: 500;
         }
 
-        /* Primary submit button (Next) */
+        /* Styling the main submit button inside the form */
         .stFormSubmitButton button {
             background-color: #1a73e8 !important;
             color: #ffffff !important;
@@ -615,13 +622,14 @@ def login_page():
             float: right !important;
             font-family: 'Roboto', 'Segoe UI', Arial, sans-serif !important;
         }
+        /*Changing the main button design when the mouse hovers over it*/
         .stFormSubmitButton button:hover {
             background-color: #1765cc !important;
             color: #ffffff !important;
             box-shadow: 0 1px 2px rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15) !important;
         }
 
-        /* Secondary mode-switch button (Create account / Sign in instead) */
+        /* Styling the button that switches between login and signup */
         .switch-row .stButton button {
             background: #ffffff !important;
             color: #202124 !important;
@@ -632,6 +640,7 @@ def login_page():
             height: 38px !important;
             padding: 0 16px !important;
         }
+        /*Changing the switch button design, when the mouse hovers over it*/
         .switch-row .stButton button:hover {
             background: #f8f9fa !important;
             border-color: #d2d5d9 !important;
@@ -641,107 +650,109 @@ def login_page():
         unsafe_allow_html=True,
     )
 
-    # ── Logo (centered, no outer wrapper card) ──
+    # Folder path of the current Python file
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    #Creating the full path to the logo
     logo_path = os.path.join(BASE_DIR, "full_size_logo.png")
 
+    #Checking whether image of logo exists in the folder
     if os.path.exists(logo_path):
-        c1, c2, c3 = st.columns([1, 1, 1])
-        with c2:
+        c1, c2, c3 = st.columns([1, 1, 1]) #Creating three columsn so that the logo can be placed in the middle column
+        with c2: #Placing the logo in the middle
             st.image(logo_path, width=110)
-    else:
+    else: #In case the logo would have been missing, show the app name as a text
         st.markdown(
             "<div style='text-align:center; font-size:32px; font-weight:600; "
             "color:#0a8f4d; margin-bottom:8px;'>Chairie</div>",
             unsafe_allow_html=True,
         )
 
-    # ── Mode state ──
+    # Getting the current authentication mode from Streamlit's session state and if no mode exists yet, the page starts in login mode
     mode = st.session_state.get("auth_mode", "login")
 
-    # ── Title / subtitle ──
+    # If the current mode is login, show the login title and subtitle
     if mode == "login":
         st.markdown('<div class="login-title">Sign in</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="login-subtitle">Use your Seat Booking account</div>',
             unsafe_allow_html=True,
         )
-    else:
+    else: #Otherwise, show the signup title and subtitle
         st.markdown('<div class="login-title">Create your account</div>', unsafe_allow_html=True)
         st.markdown(
             '<div class="login-subtitle">to continue to Seat Booking</div>',
             unsafe_allow_html=True,
         )
 
-    # ── Forms ──
+    # If current mode is login, display the login form
     if mode == "login":
-        with st.form("login_form", clear_on_submit=False):
-            email = st.text_input("Email", key="login_email")
-            password = st.text_input("Password", type="password", key="login_password")
+        with st.form("login_form", clear_on_submit=False): #Create a streamlit form for login input
+            email = st.text_input("Email", key="login_email") #Create an input field where the user enters their email
+            password = st.text_input("Password", type="password", key="login_password") #Create a password input field where the typed text is hidden
 
-            st.markdown(
+            st.markdown( #Display Chairie tagline inside the form
                 '<div class="tagline">'
                 "<strong>Chairie</strong>, Made by Students, for Students."
                 "</div>",
                 unsafe_allow_html=True,
             )
 
-            submitted = st.form_submit_button("Next")
+            submitted = st.form_submit_button("Next") #Create the submit button for the login form
 
-        # Switch-mode button rendered outside the form
+        # Start styling a row for the button that switches to signup mode
         st.markdown('<div class="switch-row">', unsafe_allow_html=True)
-        if st.button("Create account", key="go_signup"):
-            st.session_state["auth_mode"] = "signup"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        if st.button("Create account", key="go_signup"): #IF user clicks this button, switch to signup mode
+            st.session_state["auth_mode"] = "signup" #Save the new mode in session state
+            st.rerun() #Reload the page so the signup form appears immediately
+        st.markdown("</div>", unsafe_allow_html=True) #Close the styled switch-row div
 
-        if submitted:
-            if not email or not password:
+        if submitted: #Check whether the login form was submitted
+            if not email or not password: #If not, show warning text
                 st.warning("Please enter both email and password.")
-            else:
-                result = login_request(email, password)
-                if result["success"]:
-                    login_user(result["username"], result["token"])
-                    st.success("Login successful.")
-                    st.rerun()
-                else:
+            else: #If both fields are filled, try logging user in
+                result = login_request(email, password) #Send email password to login backend function
+                if result["success"]: #If backend says login was successful
+                    login_user(result["username"], result["token"]) #Save logged-in user's data in the app session
+                    st.success("Login successful.") 
+                    st.rerun() #Reloading app so the user sees the logged-in area
+                else: #Show error message if it did not work
                     st.error(result["message"])
 
-    else:  # signup
-        with st.form("signup_form", clear_on_submit=False):
+    else:  # If current mode is login, display signup form
+        with st.form("signup_form", clear_on_submit=False): #Creating streamlit form for signup input
             email = st.text_input("Email", key="signup_email")
             password = st.text_input("Password", type="password", key="signup_password")
             confirm = st.text_input("Confirm password", type="password", key="signup_confirm")
 
-            st.markdown(
+            st.markdown( #Displaying Chairie tagline inside the form
                 '<div class="tagline">'
                 "<strong>Chairie</strong>, Made by Students, for Students."
                 "</div>",
                 unsafe_allow_html=True,
             )
 
-            submitted = st.form_submit_button("Create")
+            submitted = st.form_submit_button("Create") #Create submit button for signup form
 
-        st.markdown('<div class="switch-row">', unsafe_allow_html=True)
-        if st.button("Sign in instead", key="go_login"):
-            st.session_state["auth_mode"] = "login"
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown('<div class="switch-row">', unsafe_allow_html=True) #Styled row for button that switches back to login mode
+        if st.button("Sign in instead", key="go_login"): #If users click this button, switch back to login mode
+            st.session_state["auth_mode"] = "login" #Save new mode in session state
+            st.rerun() #Reloading the page so the login form appears immediately
+        st.markdown("</div>", unsafe_allow_html=True) #Close the styled switch-row div
 
-        if submitted:
-            if not email or not password or not confirm:
+        if submitted: #Check whether the signup form was submitted
+            if not email or not password or not confirm: #If any field is empty, show a warning text
                 st.warning("Please fill in all fields.")
-            elif password != confirm:
+            elif password != confirm: #If two passwords fields are different, show warning text
                 st.warning("Passwords do not match.")
             elif len(password) < 6:
                 st.warning("Password must be at least 6 characters.")
-            else:
-                result = signup_request(email, password)
+            else: #Creating new account, if everything filled out correctly
+                result = signup_request(email, password) #Send email and password to backend function
                 if result["success"]:
                     st.success(result["message"])
                     st.info("Go back to Sign in and use your new account.")
-                    st.session_state["auth_mode"] = "login"
-                else:
+                    st.session_state["auth_mode"] = "login" #Automatically switch the page back to login mode
+                else: #If signup failed, show error message from backend
                     st.error(result["message"])
 # ─────────────────────────────────────────────────────────────
 # MAIN APP  (combined indexnew.html layout + app.py logic)
