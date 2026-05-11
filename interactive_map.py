@@ -154,6 +154,7 @@ def render_interactive_map(
     image_path: Optional[str] = None,
     layout_canvas_size: Optional[Tuple[int, int]] = None,
     height: int = 580,
+    show_diagnostics: bool = False,
     key: str = "library_map_chart",
 ) -> Optional[Dict]:
     """Render the interactive floor map.
@@ -167,6 +168,10 @@ def render_interactive_map(
         layout_canvas_size: ``(W, H)`` the JSON coords were authored against.
             Defaults to the image's own size (no scaling).
         height: chart height in pixels.
+        show_diagnostics: if True, show a small caption with the image's
+            natural size, the JSON's max coords, the canvas being used, and
+            an aspect-matched canvas suggestion when a likely mismatch is
+            detected. Use this when calibrating a new floor's map.
         key: Streamlit widget key.
     """
     # Lazy imports so the app keeps running with clear errors if a dep is missing
@@ -205,6 +210,34 @@ def render_interactive_map(
         canvas_w, canvas_h = img_w, img_h
     scale_x = img_w / canvas_w
     scale_y = img_h / canvas_h
+
+    # ── Optional calibration diagnostic ───────────────────────────────────
+    if show_diagnostics:
+        max_jx = max((int(s.get("x", 0)) for s in seats_data), default=0)
+        max_jy = max((int(s.get("y", 0)) for s in seats_data), default=0)
+        st.caption(
+            f"🔧 image natural: {img_w}×{img_h} px • "
+            f"JSON max coords: {max_jx}×{max_jy} • "
+            f"layout canvas: {canvas_w}×{canvas_h} • "
+            f"scale: ×{scale_x:.3f}, ×{scale_y:.3f}"
+        )
+        # If dots cover only a fraction of the image and no canvas was
+        # specified, suggest an aspect-matched canvas the user can paste
+        # into `layout_canvas_size`.
+        if (max_jx < img_w * 0.85 or max_jy < img_h * 0.85) and layout_canvas_size is None:
+            image_aspect = img_w / img_h
+            json_aspect = (max_jx / max_jy) if max_jy else 0.0
+            sug_w = max_jx + 20
+            sug_h_aspect = int(round(sug_w / image_aspect))
+            sug_h_pad = max_jy + 20
+            aspect_match = abs(json_aspect - image_aspect) < 0.03
+            sug_h = sug_h_aspect if aspect_match else sug_h_pad
+            st.info(
+                f"Heads up: JSON coords only span ≈{int(100 * max_jx / img_w)}% × "
+                f"{int(100 * max_jy / img_h)}% of the image. "
+                f"{'The JSON aspect ratio matches the image, so ' if aspect_match else ''}"
+                f"try `layout_canvas_size=({sug_w}, {sug_h})`."
+            )
 
     # ── 2. Build per-seat arrays for the scatter trace ────────────────────
     xs:       List[float] = []
