@@ -5,5 +5,5 @@ python-dotenv
 opencv-python-headless
 zxing-cpp
 Pillow
-streamlit-image-coordinates>=0.1.9
+plotly>=5.18.0
 pillow>=10.0.0
