@@ -697,6 +697,100 @@ def login_page():
 # ─────────────────────────────────────────────────────────────
 # MAIN APP  (combined indexnew.html layout + app.py logic)
 # ─────────────────────────────────────────────────────────────
+def _render_seat_detail_panel(seats, token):
+    """Render the seat detail panel (info + action buttons).
+
+    Called from main_app() above the interactive map. Reads
+    st.session_state["selected_seat_id"] to decide what to show.
+    """
+    st.markdown(
+        """
+        <div id="seat-details-section">
+          <div style="font-size:20px; font-weight:600; margin-bottom:14px; color:#444;">
+            Seat Details
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    selected_id = st.session_state.get("selected_seat_id")
+    if not selected_id:
+        st.info("Click a seat on the map below to see details and reserve it.")
+        return
+
+    seat = next((s for s in seats if s["id"] == selected_id), None)
+    if not seat:
+        st.warning("Selected seat not found.")
+        return
+
+    st.markdown(
+        f"""
+        <div style="background:#eef5f8; border-radius:10px; padding:16px; font-size:15px;
+                    margin-bottom:16px;">
+          <strong>Seat:</strong> {seat['code']}<br>
+          <strong>Building:</strong> {seat['building']}<br>
+          <strong>Floor:</strong> {seat['floor']}<br>
+          <strong>Status:</strong>
+          <span style="color:{seat_status_color(seat['status'])}; font-weight:700;">
+            {seat['status'].upper()}
+          </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if seat["status"] == "free":
+        st.success("This seat is free.")
+        if st.button("Reserve this seat (10 min)", key=f"reserve_{seat['id']}"):
+            result = reserve_seat(token, seat["id"])
+            if result["success"]:
+                st.success(result["message"])
+                st.info("You must scan / check in within 10 minutes.")
+                st.rerun()
+            else:
+                st.error(result["message"])
+
+    elif seat["status"] == "reserved":
+        if seat["reserved_by_me"]:
+            st.warning("This seat is reserved by you.")
+            st.info(f"Time left to check in: {countdown(seat['reserved_until'])}")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Simulate QR / Check In", key=f"checkin_{seat['id']}"):
+                    result = check_in_from_qr(token, seat["id"])
+                    if result["success"]:
+                        st.success(result["message"])
+                        st.rerun()
+                    else:
+                        st.error(result["message"])
+            with c2:
+                if st.button("Cancel Reservation", key=f"cancel_{seat['id']}"):
+                    result = cancel_reservation(token)
+                    if result["success"]:
+                        st.success(result["message"])
+                        st.rerun()
+                    else:
+                        st.error(result["message"])
+            st.caption("In the real app, 'Simulate QR / Check In' is replaced by a real QR scan.")
+        else:
+            st.error("Someone else reserved this seat.")
+
+    elif seat["status"] == "occupied":
+        if seat["occupied_by_me"]:
+            st.success("You are currently occupying this seat.")
+            st.info(f"Re-check countdown: {countdown(seat['occupied_until'])}")
+            if st.button("Release Seat", key=f"release_{seat['id']}"):
+                result = release_current_seat(token)
+                if result["success"]:
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(result["message"])
+        else:
+            st.error("This seat is already occupied by someone else.")
+
+
 def main_app():
     require_login()
 
@@ -865,40 +959,52 @@ def main_app():
             unsafe_allow_html=True,
         )
 
-        # ── Zoom control ────────────────────────────────────────────────
-        # Discrete steps so reruns are predictable on touch devices. When
-        # zoom > 1, render_interactive_map crops around the currently-
-        # selected seat (or the image centre if no seat is selected).
-        zoom_level = st.select_slider(
-            "Map zoom",
-            options=[1.0, 1.5, 2.0, 2.5, 3.0],
-            value=1.0,
-            key="map_zoom_level",
-            format_func=lambda v: f"{v:g}×",
-            help="Zoom in to see seats more clearly. The view centres on "
-                 "your currently-selected seat (or the middle of the map "
-                 "if you haven't picked one yet).",
+        # ── Click handling ───────────────────────────────────────────────
+        # Plotly stores the most recent selection event in st.session_state
+        # under the chart's key. We read it BEFORE rendering anything so the
+        # detail panel above the map can use the up-to-date selection on
+        # the same rerun (no extra rerun needed).
+        _MAP_KEY = "library_map_chart"
+        chart_event = st.session_state.get(_MAP_KEY)
+        if isinstance(chart_event, dict):
+            sel = chart_event.get("selection")
+            points = (sel.get("points") if isinstance(sel, dict) else None) or []
+            if points:
+                cd = points[0].get("customdata")
+                if cd is not None:
+                    try:
+                        clicked_id = int(cd[0] if isinstance(cd, (list, tuple)) else cd)
+                        if clicked_id != st.session_state.get("selected_seat_id"):
+                            st.session_state["selected_seat_id"] = clicked_id
+                    except (TypeError, ValueError):
+                        pass
+
+        # ── Seat detail panel ABOVE the map ─────────────────────────────
+        _render_seat_detail_panel(seats, token)
+
+        # ── Map header + interactive map ────────────────────────────────
+        st.markdown(
+            f"""
+            <div style="margin: 18px 0 10px 0; font-size:20px; font-weight:600; color:#444;">
+              Map — {floor_choice}
+              <span style="font-weight:400; font-size:13px; color:#777;">
+                (hover a dot for info, click to select, scroll/pinch to zoom)
+              </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        clicked = render_interactive_map(
+        render_interactive_map(
             merged_seats,
             selected_seat_id=st.session_state.get("selected_seat_id"),
             image_path=os.path.join(BASE_DIR, "Library_GFloor.jpg"),
-            click_tolerance=22,
-            # Calibrated for the current Library_GFloor.jpg (1798×1171).
-            # The seat-layout JSON was authored on a downscaled 1300×848
-            # canvas, so dots/clicks rescale to the natural image by ×1.38.
-            # If you ever swap the floor plan image and dots stop aligning,
-            # re-run with `show_diagnostics=True` to find the new values.
+            # Calibrated for the current Library_GFloor.jpg (1798×1171):
+            # the JSON was authored on a downscaled 1300×848 canvas, so
+            # seat coords scale up to natural image pixels by ×1.38.
             layout_canvas_size=(1300, 848),
-            zoom_level=zoom_level,
-            show_seat_label=True,
-            show_diagnostics=False,
+            key=_MAP_KEY,
         )
-
-        if clicked is not None and clicked.get("id") != st.session_state.get("selected_seat_id"):
-            st.session_state["selected_seat_id"] = clicked["id"]
-            st.rerun()
 
     else:
         # ── LEGACY FALLBACK: static image + button grid ─────────────────────
@@ -973,95 +1079,9 @@ def main_app():
                     if st.button("Select", key=f"sel_{seat['id']}"):
                         st.session_state["selected_seat_id"] = seat["id"]
 
-    # ── Seat detail panel (from app.py render_seat_details) ──
-    st.markdown(
-        """
-        <div id="seat-details-section"
-             style="border-top:2px solid #2b6f95; margin-top:24px; padding-top:20px;">
-          <div style="font-size:20px; font-weight:600; margin-bottom:14px; color:#444;">
-            Seat Details
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    selected_id = st.session_state.get("selected_seat_id")
-    if not selected_id:
-        st.info("Click a 'Select' button above to see seat details.")
-        return
-
-    seat = next((s for s in seats if s["id"] == selected_id), None)
-    if not seat:
-        st.warning("Selected seat not found.")
-        return
-
-    st.markdown(
-        f"""
-        <div style="background:#eef5f8; border-radius:10px; padding:16px; font-size:15px;
-                    margin-bottom:16px;">
-          <strong>Seat:</strong> {seat['code']}<br>
-          <strong>Building:</strong> {seat['building']}<br>
-          <strong>Floor:</strong> {seat['floor']}<br>
-          <strong>Status:</strong>
-          <span style="color:{seat_status_color(seat['status'])}; font-weight:700;">
-            {seat['status'].upper()}
-          </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Actions depend on seat state (from app.py render_seat_details)
-    if seat["status"] == "free":
-        st.success("This seat is free.")
-        if st.button("Reserve this seat (10 min)", key=f"reserve_{seat['id']}"):
-            result = reserve_seat(token, seat["id"])
-            if result["success"]:
-                st.success(result["message"])
-                st.info("You must scan / check in within 10 minutes.")
-                st.rerun()
-            else:
-                st.error(result["message"])
-
-    elif seat["status"] == "reserved":
-        if seat["reserved_by_me"]:
-            st.warning("This seat is reserved by you.")
-            st.info(f"Time left to check in: {countdown(seat['reserved_until'])}")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Simulate QR / Check In", key=f"checkin_{seat['id']}"):
-                    result = check_in_from_qr(token, seat["id"])
-                    if result["success"]:
-                        st.success(result["message"])
-                        st.rerun()
-                    else:
-                        st.error(result["message"])
-            with c2:
-                if st.button("Cancel Reservation", key=f"cancel_{seat['id']}"):
-                    result = cancel_reservation(token)
-                    if result["success"]:
-                        st.success(result["message"])
-                        st.rerun()
-                    else:
-                        st.error(result["message"])
-            st.caption("In the real app, 'Simulate QR / Check In' is replaced by a real QR scan.")
-        else:
-            st.error("Someone else reserved this seat.")
-
-    elif seat["status"] == "occupied":
-        if seat["occupied_by_me"]:
-            st.success("You are currently occupying this seat.")
-            st.info(f"Re-check countdown: {countdown(seat['occupied_until'])}")
-            if st.button("Release Seat", key=f"release_{seat['id']}"):
-                result = release_current_seat(token)
-                if result["success"]:
-                    st.success(result["message"])
-                    st.rerun()
-                else:
-                    st.error(result["message"])
-        else:
-            st.error("This seat is already occupied by someone else.")
+        # For the legacy Floor 1 path, still show the seat details — but
+        # at the bottom, since clicks come from the button grid above.
+        _render_seat_detail_panel(seats, token)
 
 
 # ─────────────────────────────────────────────────────────────
