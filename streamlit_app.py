@@ -921,14 +921,13 @@ def main_app():
 
     seats = seats_result["seats"]
 
-    # ── Floor filter ─────────────────────────────────────────────────────
-    # Use strict per-floor filtering when ANY seat has a floor field, so
-    # selecting Floor 1 never falls back to Ground Floor's seats. Only fall
-    # back to "show all" if the database has no floor information at all
-    # (legacy case).
-    has_floor_field = any(
-        s.get("floor") is not None and s.get("floor") != "" for s in seats
-    )
+    # ── Floor filter (for the toolbar count above the map) ──────────────
+    # Strictly filter by `floor` so the "free on <floor>" badge never
+    # shows another floor's count. An empty result here legitimately
+    # means "0 free seats on this floor". This is the bug we fixed —
+    # the previous fallback ('if not floor_seats: floor_seats = seats')
+    # was making Floor 1 inherit Ground Floor's count whenever Floor 1
+    # had no rows in Supabase.
 
     # ── Toolbar row above the map: floor selector + free count + legend ──
     tcol1, tcol2, tcol3 = st.columns([2, 2, 5])
@@ -942,11 +941,7 @@ def main_app():
         )
 
     floor_number = "0" if floor_choice == "Ground Floor" else "1"
-    if has_floor_field:
-        floor_seats = [s for s in seats if str(s.get("floor", "")) == floor_number]
-    else:
-        floor_seats = seats
-
+    floor_seats = [s for s in seats if str(s.get("floor", "")) == floor_number]
     free_count = sum(1 for s in floor_seats if s["status"] == "free")
 
     with tcol2:
@@ -1003,8 +998,13 @@ def main_app():
 
     if layout and layout.get("seats"):
         # ── INTERACTIVE MAP PATH ────────────────────────────────────────────
-        # Merge layout coordinates with live Supabase status (by seat id).
-        supabase_by_id = {int(s["id"]): s for s in floor_seats}
+        # Merge layout coordinates with live Supabase status by seat id.
+        # We index against ALL Supabase rows (not just floor_seats): each
+        # floor's JSON uses a non-overlapping id range (Ground 1..189,
+        # Floor 1 190..496), so a Supabase row can only match the floor it
+        # actually belongs to. Using all seats also keeps the green dots
+        # working if a row is missing its `floor` value.
+        supabase_by_id = {int(s["id"]): s for s in seats}
 
         merged_seats = []
         for layout_seat in layout["seats"]:
