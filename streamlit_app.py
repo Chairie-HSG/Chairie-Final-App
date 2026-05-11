@@ -68,7 +68,7 @@ FLOOR_CONFIG = {
         # so the caption tells you what to change this to if dots don't
         # land on the chairs. Once calibrated, paste the right numbers
         # here and flip show_diagnostics back to False.
-        "layout_canvas_size": (1351, 1011),
+        "layout_canvas_size": (1349, 1015),
         "show_diagnostics":   True,
         "map_key":            "library_map_chart_floor1",
     },
