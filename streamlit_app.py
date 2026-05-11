@@ -41,6 +41,39 @@ except Exception:
         except Exception:
             pass
 
+
+# ─────────────────────────────────────────────────────────────
+# PER-FLOOR MAP CONFIGURATION
+# ─────────────────────────────────────────────────────────────
+# Each entry tells the map renderer what to load for that floor:
+#   - json_path:          seat-layout file (None = use default candidates)
+#   - image_filename:     floor plan image to overlay seats onto
+#   - layout_canvas_size: (W, H) the JSON coords were authored against.
+#                         Calibrated per floor so dots line up with chairs.
+#   - show_diagnostics:   True while still calibrating; False in production.
+#   - map_key:            unique Streamlit widget key per floor (so each
+#                         floor's selection persists independently).
+FLOOR_CONFIG = {
+    "Ground Floor": {
+        "json_path":          None,
+        "image_filename":     "Library_GFloor.jpg",
+        "layout_canvas_size": (1300, 848),    # calibrated
+        "show_diagnostics":   False,
+        "map_key":            "library_map_chart_ground",
+    },
+    "Floor 1": {
+        "json_path":          "library_map_data_floor1.json",
+        "image_filename":     "Library_1Floor.jpg",
+        # Initial guess: max-coord + 20 in each dim. Diagnostics are ON
+        # so the caption tells you what to change this to if dots don't
+        # land on the chairs. Once calibrated, paste the right numbers
+        # here and flip show_diagnostics back to False.
+        "layout_canvas_size": (1351, 1011),
+        "show_diagnostics":   True,
+        "map_key":            "library_map_chart_floor1",
+    },
+}
+
 # Supabase
 import os
 from supabase import create_client
@@ -905,21 +938,16 @@ def main_app():
     # ── Map: interactive (clickable dots) if JSON layout exists, else legacy image+grid ──
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    # Per-floor layout JSON. Ground Floor uses the default candidates handled by
-    # interactive_map.load_map_data(). Floor 1 is optional — if you generate a
-    # layout for it later, drop it next to streamlit_app.py with this filename.
-    floor_layout_overrides = {
-        "Floor 1": os.path.join(BASE_DIR, "library_map_data_floor1.json"),
-    }
+    floor_cfg = FLOOR_CONFIG.get(floor_choice)
 
     layout = None
-    if INTERACTIVE_MAP_AVAILABLE:
-        override = floor_layout_overrides.get(floor_choice)
-        if override is not None:
-            # Try the floor-specific file silently; falls through to None if absent.
-            layout = load_layout_data(override, silent=True)
+    if INTERACTIVE_MAP_AVAILABLE and floor_cfg is not None:
+        json_path = floor_cfg["json_path"]
+        if json_path:
+            full_path = os.path.join(BASE_DIR, json_path)
+            layout = load_layout_data(full_path, silent=True)
         else:
-            # Ground Floor (default): use the candidate filenames built into the module.
+            # Use the module's default JSON candidates (Ground Floor).
             layout = load_layout_data(silent=True)
 
     if layout and layout.get("seats"):
@@ -943,29 +971,14 @@ def main_app():
                 "status": (live or {}).get("status", "maintenance"),
             })
 
-        # Sync click -> session_state. The component returns the seat dict
-        # the user is currently clicked on (persists across reruns until
-        # they click somewhere else). When the selection changes we rerun
-        # so the highlight ring redraws around the new dot immediately.
-        st.markdown(
-            f"""
-            <div style="margin-bottom:10px; font-size:20px; font-weight:600; color:#444;">
-              Map — {floor_choice}
-              <span style="font-weight:400; font-size:13px; color:#777;">
-                (click a dot to view seat details)
-              </span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
         # ── Click handling ───────────────────────────────────────────────
         # Plotly stores the most recent selection event in st.session_state
         # under the chart's key. We read it BEFORE rendering anything so the
         # detail panel above the map can use the up-to-date selection on
-        # the same rerun (no extra rerun needed).
-        _MAP_KEY = "library_map_chart"
-        chart_event = st.session_state.get(_MAP_KEY)
+        # the same rerun (no extra rerun needed). Per-floor key means each
+        # floor's selection persists independently.
+        map_key = floor_cfg["map_key"]
+        chart_event = st.session_state.get(map_key)
         if isinstance(chart_event, dict):
             sel = chart_event.get("selection")
             points = (sel.get("points") if isinstance(sel, dict) else None) or []
@@ -998,12 +1011,10 @@ def main_app():
         render_interactive_map(
             merged_seats,
             selected_seat_id=st.session_state.get("selected_seat_id"),
-            image_path=os.path.join(BASE_DIR, "Library_GFloor.jpg"),
-            # Calibrated for the current Library_GFloor.jpg (1798×1171):
-            # the JSON was authored on a downscaled 1300×848 canvas, so
-            # seat coords scale up to natural image pixels by ×1.38.
-            layout_canvas_size=(1300, 848),
-            key=_MAP_KEY,
+            image_path=os.path.join(BASE_DIR, floor_cfg["image_filename"]),
+            layout_canvas_size=floor_cfg["layout_canvas_size"],
+            show_diagnostics=floor_cfg["show_diagnostics"],
+            key=map_key,
         )
 
     else:
