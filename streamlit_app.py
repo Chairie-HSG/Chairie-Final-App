@@ -19,6 +19,11 @@ from datetime import datetime as dt, timedelta, timezone
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
+# Plotly is used by both the interactive map AND the landing page's
+# "Today's forecast" charts (shell data for now — wired to mock series
+# until we have real time-series occupancy data in Supabase).
+import plotly.graph_objects as go
+
 # ─────────────────────────────────────────────────────────────
 # INTERACTIVE MAP  (from interactive_map.py)
 # Graceful fallback: if the module or its deps are missing, the app
@@ -459,6 +464,11 @@ def init_auth_state():
         "token": None,
         "selected_seat_id": None,
         "auth_mode": "login",
+        # Which page of the post-login app is currently visible.
+        # Possible values: "home", "map", "profile", "settings".
+        # Defaults to "home" so users land on the marketing/landing
+        # page right after login and click through to the map.
+        "current_page": "home",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -480,6 +490,8 @@ def logout_user():
     st.session_state["username"] = None
     st.session_state["token"] = None
     st.session_state["selected_seat_id"] = None
+    # Reset the visible page so the next login starts on the landing page.
+    st.session_state["current_page"] = "home"
     # Drop ?seat=… from the URL so a fresh session starts clean.
     try:
         clear_seat_selection()
@@ -872,43 +884,552 @@ def _render_seat_detail_panel(seats, token):
             st.error("This seat is already occupied by someone else.")
 
 
-def main_app():
-    require_login()
+# ─────────────────────────────────────────────────────────────
+# FLOOR HELPERS  (used by both map page and landing stats)
+# ─────────────────────────────────────────────────────────────
+# Floor metadata used by every page that needs to show per-floor
+# numbers (landing-page stat cards, map-page filter, etc.). The
+# "matches" set is what `_seat_belongs_to_floor` checks against,
+# so Supabase rows can store floor as int 0/1, string "0"/"1",
+# "Ground", "Ground Floor", or "Floor 1" — anything reasonable.
+FLOOR_META = {
+    "Ground Floor": {
+        "display":  "Library Ground Floor",
+        "matches":  {"0", "ground", "ground floor", "g", "gf"},
+        "capacity": 207,   # total physical seats (used as a fallback when
+                           # Supabase doesn't return any rows for the floor)
+    },
+    "Floor 1": {
+        "display":  "Library Upper Floor",
+        "matches":  {"1", "first", "first floor", "floor 1", "upper", "upper floor"},
+        "capacity": 296,
+    },
+}
 
-    # Auto-refresh every 30s (countdowns and seat statuses update live)
-    st_autorefresh(interval=30000, key="seat_refresh")
 
-    # Inject the global CSS shell once per page render.
-    _inject_app_shell()
+def _seat_belongs_to_floor(seat, floor_choice):
+    """Return True if `seat` lives on the floor named by `floor_choice`.
 
-    token = st.session_state["token"]
+    Robust to whatever the Supabase row stores in `floor`:
+      - int 0 / 1
+      - str "0" / "1"
+      - str "Ground" / "Ground Floor" / "Floor 1" / "Upper"
+    Falls back to False on missing / unrecognized floor values.
 
-    # ── Top bar ──────────────────────────────────────────────────────────
+    NOTE: this replaces the previous brittle comparison
+        str(s.get("floor", "")) == ("0" if floor_choice == "Ground Floor" else "1")
+    which failed to filter when Supabase stored the floor as anything
+    other than the bare digits "0" / "1" — and was the root of the
+    "ground-floor count shows up on the upper-floor map" bug.
+    """
+    meta = FLOOR_META.get(floor_choice)
+    if not meta:
+        return False
+    raw = seat.get("floor")
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in meta["matches"]
+
+
+def _compute_floor_stats(seats, floor_choice):
+    """Aggregate counts for one floor: total/free/reserved/occupied.
+
+    Returns a dict the landing page + map page can both use:
+        {
+          "total":    <int>,
+          "free":     <int>,
+          "reserved": <int>,
+          "occupied": <int>,
+          "taken":    <int>,    # reserved + occupied
+          "pct_taken": <float>,  # 0.0–1.0
+          "availability": "open" | "busy" | "full",
+        }
+    If Supabase has no rows for this floor we fall back to
+    FLOOR_META[...]["capacity"] for `total` so the progress bar
+    still has a sensible denominator (and `free` is treated as 0).
+    """
+    rows = [s for s in seats if _seat_belongs_to_floor(s, floor_choice)]
+    total    = len(rows) or FLOOR_META[floor_choice]["capacity"]
+    free     = sum(1 for s in rows if s.get("status") == "free")
+    reserved = sum(1 for s in rows if s.get("status") == "reserved")
+    occupied = sum(1 for s in rows if s.get("status") == "occupied")
+    taken    = reserved + occupied
+    pct      = (taken / total) if total else 0.0
+
+    if pct >= 0.85:
+        availability = "full"
+    elif pct >= 0.60:
+        availability = "busy"
+    else:
+        availability = "open"
+
+    return {
+        "total":        total,
+        "free":         free,
+        "reserved":     reserved,
+        "occupied":     occupied,
+        "taken":        taken,
+        "pct_taken":    pct,
+        "availability": availability,
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# SHARED CHROME  (sidebar + top bar — visible on every page)
+# ─────────────────────────────────────────────────────────────
+def _go_to(page):
+    """Helper used by sidebar buttons + top-bar email click."""
+    st.session_state["current_page"] = page
+    # Clear any per-page selection state that shouldn't survive a
+    # page change (e.g. don't keep a previously-clicked seat
+    # selected when the user comes back to the map later).
+    if page != "map":
+        st.session_state["selected_seat_id"] = None
+
+
+def _render_sidebar():
+    """Render the left-hand navigation rail (Home / Map / Profile / Settings).
+
+    The active page button is rendered with type="primary" so the
+    CSS in app_styles.html can highlight it in Chairie green.
+    """
+    current = st.session_state.get("current_page", "home")
+
+    with st.sidebar:
+        # Brand block at the top
+        st.markdown(
+            """
+            <div class="chairie-sidebar-brand">
+              <span class="chairie-sidebar-brand-mark">C</span>
+              <div class="chairie-sidebar-brand-text">
+                <span class="chairie-sidebar-brand-name">Chairie</span>
+                <span class="chairie-sidebar-brand-sub">Seat Finder</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            '<div class="chairie-nav-label">Menu</div>',
+            unsafe_allow_html=True,
+        )
+
+        # (label, page_key) pairs — order is the visible order in the rail.
+        nav_items = [
+            ("🏠   Home",      "home"),
+            ("🗺️   Map",       "map"),
+            ("👤   Profile",   "profile"),
+            ("⚙️   Settings",  "settings"),
+        ]
+        for label, page_key in nav_items:
+            is_active = (current == page_key)
+            if st.button(
+                label,
+                key=f"nav_{page_key}",
+                # type="primary" → CSS paints it green; otherwise transparent
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+            ):
+                _go_to(page_key)
+                st.rerun()
+
+
+def _render_top_bar(page_label):
+    """Render the shared top bar on every post-login page.
+
+    Layout (single row):
+        [logo + name + page label]      [email chip]  [logout]
+    The email chip is clickable — clicking it routes to the
+    Profile page (matching the requirement that "clicking on your
+    email will land you to the profile page as well").
+    """
+    # The whole bar is wrapped in a keyed container so the CSS rule
+    # `.st-key-chairie_topbar` can paint it as a single white card.
+    with st.container(key="chairie_topbar"):
+        col_left, col_right = st.columns([6, 4])
+
+        with col_left:
+            st.markdown(
+                f"""
+                <div style="display: flex; align-items: center; gap: 14px;">
+                  <div class="chairie-brand">
+                    <span class="chairie-brand-mark">C</span>
+                    <span>Chairie</span>
+                  </div>
+                  <div class="chairie-page-label">{page_label}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col_right:
+            # Keyed sub-container so the CSS scope
+            # `.st-key-chairie_topbar_right` only restyles these two
+            # buttons (the email chip + the red logout pill).
+            with st.container(key="chairie_topbar_right"):
+                bcol_email, bcol_logout = st.columns([3, 2])
+                with bcol_email:
+                    email_label = st.session_state.get("username") or "Account"
+                    if st.button(
+                        email_label,
+                        key="email_topbar_btn",
+                        use_container_width=True,
+                        help="Open your profile",
+                    ):
+                        _go_to("profile")
+                        st.rerun()
+                with bcol_logout:
+                    if st.button(
+                        "Logout",
+                        key="logout_topbar_btn",
+                        type="secondary",
+                        use_container_width=True,
+                    ):
+                        logout_user()
+                        st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+# LANDING PAGE  (the "home" route — users land here after login)
+# ─────────────────────────────────────────────────────────────
+#
+# Layout, top to bottom:
+#   1) Green hero card with the brand slogan + "Find a Seat" CTA
+#      → the CTA routes to the map page.
+#   2) KPI strip (3 small cards): total free seats, floors monitored,
+#      last-updated stamp. Light, glanceable summary.
+#   3) Per-floor stat cards: name, "free / total" big number,
+#      progress bar (green→honey→red as occupancy rises), and an
+#      Open/Busy/Full pill in the top-right.
+#   4) Per-floor "Today's forecast" Plotly bar chart — shell data
+#      for now (mocked hourly occupancy). When real time-series
+#      occupancy lands in Supabase, swap _mock_forecast_series()
+#      for a real fetch and the rest of the page keeps working.
+
+def _mock_forecast_series(floor_choice):
+    """Generate a stable, plausible hourly occupancy curve (8h–21h).
+
+    Returns a list of 14 floats in 0..1 indexed by hour 8..21.
+    The curve peaks around 10–11am and again 14–15pm to match
+    typical library traffic. Different floors get slightly
+    different shapes so the two charts don't look identical.
+
+    Pure-Python (no numpy) so we don't add a dependency just for
+    placeholder data. Replace this with a Supabase query when real
+    history is available.
+    """
+    hours = list(range(8, 22))
+    if floor_choice == "Ground Floor":
+        # Wider peak, busier overall
+        base = [0.30, 0.62, 0.78, 0.72, 0.58, 0.70, 0.74, 0.72,
+                0.66, 0.58, 0.40, 0.22, 0.12, 0.06]
+    else:
+        # Quieter mornings, peak 1–2pm
+        base = [0.20, 0.55, 0.68, 0.66, 0.52, 0.74, 0.72, 0.66,
+                0.60, 0.50, 0.32, 0.18, 0.10, 0.05]
+    return list(zip(hours, base[: len(hours)]))
+
+
+def _render_forecast_chart(floor_choice, floor_stats):
+    """Render the "Today's forecast" bar chart for a single floor.
+
+    The bar for the current hour is recoloured to match the floor's
+    current availability — green when there are free seats, honey
+    when it's getting busy, red when it's full. The other bars are
+    a calm dark green so the eye is pulled to "right now".
+    """
+    series = _mock_forecast_series(floor_choice)
+    hours      = [h for h, _ in series]
+    occupancy  = [pct for _, pct in series]
+
+    # Find "now" — clamp to the chart range so we always highlight
+    # one bar even outside operating hours.
+    now_hour = dt.now().hour
+    if now_hour < hours[0]:
+        now_hour = hours[0]
+    elif now_hour > hours[-1]:
+        now_hour = hours[-1]
+
+    # Per-bar colour: highlight the current hour with the floor's
+    # availability colour, mute all the others.
+    availability = floor_stats["availability"]
+    highlight_color = {
+        "open":  "#4A7C2D",
+        "busy":  "#F2C46D",
+        "full":  "#E30613",
+    }.get(availability, "#4A7C2D")
+    base_color = "#cfe0bf"   # very soft green tint for muted bars
+
+    colors = [
+        highlight_color if h == now_hour else base_color
+        for h in hours
+    ]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=hours,
+        y=occupancy,
+        marker_color=colors,
+        hovertemplate="<b>%{x}:00</b><br>%{y:.0%} taken<extra></extra>",
+        showlegend=False,
+    ))
+    fig.update_layout(
+        title=None,
+        margin=dict(l=10, r=10, t=10, b=10),
+        height=220,
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            tickmode="array",
+            tickvals=hours,
+            ticktext=[str(h) for h in hours],
+            showgrid=False,
+            zeroline=False,
+            tickfont=dict(size=11, color="#9ca3af"),
+        ),
+        yaxis=dict(
+            tickformat=".0%",
+            range=[0, 1],
+            showgrid=True,
+            gridcolor="#f1eee2",
+            zeroline=False,
+            tickfont=dict(size=11, color="#9ca3af"),
+        ),
+        bargap=0.30,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+def _render_floor_stat_card(floor_choice, floor_stats):
+    """Render the per-floor stat card for the landing page."""
+    pct      = floor_stats["pct_taken"]
+    free     = floor_stats["free"]
+    total    = floor_stats["total"]
+    avail    = floor_stats["availability"]
+    display  = FLOOR_META[floor_choice]["display"]
+
+    # Progress bar colour matches availability tier
+    bar_class = {"open": "low", "busy": "mid", "full": "high"}[avail]
+    pill_text = {"open": "Open", "busy": "Busy", "full": "Full"}[avail]
+
     st.markdown(
         f"""
-        <div class="chairie-topbar">
-          <div class="chairie-brand">
-            <span class="chairie-brand-mark">C</span>
-            <span>Chairie</span>
+        <div class="chairie-stat-card">
+          <div class="chairie-stat-card-header">
+            <div>
+              <div class="chairie-stat-card-title">{display}</div>
+              <div class="chairie-stat-card-sub">Live availability</div>
+            </div>
+            <span class="chairie-availability-pill {avail}">{pill_text}</span>
           </div>
-          <div class="chairie-page-label">Library Map</div>
-          <div class="chairie-user">{st.session_state['username']}</div>
+
+          <div>
+            <span class="chairie-stat-bignum">{free}</span>
+            <span class="chairie-stat-bignum-suffix">/ {total}</span>
+          </div>
+          <div class="chairie-stat-bignum-label">seats free right now</div>
+
+          <div class="chairie-progress">
+            <div class="chairie-progress-fill {bar_class}"
+                 style="width: {pct * 100:.1f}%;"></div>
+          </div>
+          <div class="chairie-progress-meta">
+            <span>{floor_stats['taken']} taken</span>
+            <span>{pct * 100:.0f}% full</span>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Logout (right-aligned via a thin column trick)
-    _, _, c_logout = st.columns([6, 6, 2])
-    with c_logout:
-        if st.button("Logout", key="logout_btn", type="secondary"):
-            logout_user()
-            st.rerun()
+
+def landing_page(token):
+    """Render the landing / home page that users see after login.
+
+    Hero + KPI strip + per-floor stat cards + per-floor forecast charts.
+    All numbers come from `get_seats(token)`; forecast bars use a
+    mock series until real time-series occupancy lands in Supabase.
+    """
+    _render_top_bar("Home")
+
+    # ── Hero card with slogan + CTA ─────────────────────────────────────
+    st.markdown(
+        """
+        <div class="chairie-hero">
+          <div class="chairie-hero-eyebrow">Chairie · HSG Seat Finder</div>
+          <div class="chairie-hero-slogan">No Wandering,<br>Just Studying.</div>
+          <div class="chairie-hero-sub">
+            See live seat availability across every floor of the HSG library
+            and reserve your spot in seconds. No more loops around the
+            study halls.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # The CTA is a real Streamlit button so it can route. We host it in
+    # a keyed container so the CSS rule `.st-key-chairie_hero_cta` can
+    # paint just THIS button in honey-yellow (a wrapper-div approach
+    # doesn't work — Streamlit renders each widget in its own DOM
+    # container, so an open-then-close div in two markdown calls leaves
+    # the button as a sibling, not a child).
+    with st.container(key="chairie_hero_cta"):
+        cta_col, _ = st.columns([2, 6])
+        with cta_col:
+            if st.button("Find a Seat  →", key="hero_find_seat_btn", use_container_width=True):
+                _go_to("map")
+                st.rerun()
+
+    # ── Pull fresh data from Supabase ───────────────────────────────────
+    seats_result = get_seats(token)
+    if not seats_result.get("success"):
+        st.error(seats_result.get("message", "Could not fetch seats."))
+        return
+    seats = seats_result["seats"]
+
+    # ── KPI strip ───────────────────────────────────────────────────────
+    total_free = sum(1 for s in seats if s.get("status") == "free")
+    floors_n   = len(FLOOR_META)
+    now_str    = dt.now().strftime("%H:%M")
+
+    st.markdown(
+        '<div class="chairie-section-title">At a glance</div>',
+        unsafe_allow_html=True,
+    )
+    k1, k2, k3 = st.columns(3)
+    with k1:
+        st.markdown(
+            f"""
+            <div class="chairie-kpi">
+              <div class="chairie-kpi-icon green">✓</div>
+              <div class="chairie-kpi-text">
+                <span class="chairie-kpi-num">{total_free}</span>
+                <span class="chairie-kpi-label">Seats free right now</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with k2:
+        st.markdown(
+            f"""
+            <div class="chairie-kpi">
+              <div class="chairie-kpi-icon honey">▦</div>
+              <div class="chairie-kpi-text">
+                <span class="chairie-kpi-num">{floors_n}</span>
+                <span class="chairie-kpi-label">Floors monitored</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with k3:
+        st.markdown(
+            f"""
+            <div class="chairie-kpi">
+              <div class="chairie-kpi-icon red">⟳</div>
+              <div class="chairie-kpi-text">
+                <span class="chairie-kpi-num">{now_str}</span>
+                <span class="chairie-kpi-label">Last updated · auto-refresh</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ── Per-floor stat cards ────────────────────────────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Library by floor '
+        '<span class="hint">live numbers from Supabase</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    floor_choices = list(FLOOR_META.keys())
+    stat_cols = st.columns(len(floor_choices))
+    floor_stats_cache = {}
+    for col, floor_choice in zip(stat_cols, floor_choices):
+        stats = _compute_floor_stats(seats, floor_choice)
+        floor_stats_cache[floor_choice] = stats
+        with col:
+            _render_floor_stat_card(floor_choice, stats)
+
+    # ── Per-floor "Today's forecast" charts ─────────────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Today\'s forecast '
+        '<span class="hint">typical occupancy by hour</span></div>',
+        unsafe_allow_html=True,
+    )
+    fc_cols = st.columns(len(floor_choices))
+    for col, floor_choice in zip(fc_cols, floor_choices):
+        with col:
+            st.markdown(
+                f"<div class='chairie-eyebrow'>{FLOOR_META[floor_choice]['display']}</div>",
+                unsafe_allow_html=True,
+            )
+            _render_forecast_chart(floor_choice, floor_stats_cache[floor_choice])
+
+
+# ─────────────────────────────────────────────────────────────
+# PROFILE PAGE  (placeholder for now)
+# ─────────────────────────────────────────────────────────────
+def profile_page(token):
+    """Empty placeholder per the spec — to be fleshed out later."""
+    _render_top_bar("Profile")
+    st.markdown(
+        f"""
+        <div class="chairie-placeholder">
+          <div class="chairie-placeholder-icon">👤</div>
+          <div class="chairie-placeholder-title">Your profile</div>
+          <div class="chairie-placeholder-sub">
+            Signed in as <strong>{st.session_state.get("username", "anonymous")}</strong>.
+            Profile details, reservation history and preferences will live
+            here. Coming soon.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# SETTINGS PAGE  (placeholder for now)
+# ─────────────────────────────────────────────────────────────
+def settings_page(token):
+    """Empty placeholder per the spec — to be fleshed out later."""
+    _render_top_bar("Settings")
+    st.markdown(
+        """
+        <div class="chairie-placeholder">
+          <div class="chairie-placeholder-icon">⚙</div>
+          <div class="chairie-placeholder-title">Settings</div>
+          <div class="chairie-placeholder-sub">
+            Notification preferences, appearance and account controls will
+            live here. Coming soon.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# MAP PAGE  (the original main_app body — now scoped to "map")
+# ─────────────────────────────────────────────────────────────
+def map_page(token):
+    """Interactive seat-reservation map (one floor at a time).
+
+    This is the actual product: pick a floor, click a seat, reserve
+    or check in. The top bar + sidebar come from the router; this
+    function only renders the page body.
+    """
+    _render_top_bar("Library Map")
 
     # ── User status banner ───────────────────────────────────────────────
     status_result = get_user_status(token)
     if status_result.get("success"):
-        reserved_seat = status_result.get("reserved_seat")
+        reserved_seat   = status_result.get("reserved_seat")
         checked_in_seat = status_result.get("checked_in_seat")
 
         if reserved_seat:
@@ -932,14 +1453,6 @@ def main_app():
 
     seats = seats_result["seats"]
 
-    # ── Floor filter (for the toolbar count above the map) ──────────────
-    # Strictly filter by `floor` so the "free on <floor>" badge never
-    # shows another floor's count. An empty result here legitimately
-    # means "0 free seats on this floor". This is the bug we fixed —
-    # the previous fallback ('if not floor_seats: floor_seats = seats')
-    # was making Floor 1 inherit Ground Floor's count whenever Floor 1
-    # had no rows in Supabase.
-
     # ── Toolbar row above the map: floor selector + free count + legend ──
     tcol1, tcol2, tcol3 = st.columns([2, 2, 5])
     with tcol1:
@@ -951,9 +1464,18 @@ def main_app():
             label_visibility="visible",
         )
 
-    floor_number = "0" if floor_choice == "Ground Floor" else "1"
-    floor_seats = [s for s in seats if str(s.get("floor", "")) == floor_number]
-    free_count = sum(1 for s in floor_seats if s["status"] == "free")
+    # FIX for the per-floor count bug:
+    # The previous code did a brittle exact-string match against "0"/"1",
+    # which silently filtered out rows whose `floor` was stored as
+    # an int 0/1 or as a name ("Ground"). When the filter returned
+    # an empty list, the map fell back to rendering nothing meaningful
+    # but the badge above could still read like it was reporting
+    # numbers from the wrong floor.
+    # _seat_belongs_to_floor() handles every reasonable representation,
+    # so the "free on <floor>" badge below now always matches the
+    # floor the user selected.
+    floor_seats = [s for s in seats if _seat_belongs_to_floor(s, floor_choice)]
+    free_count  = sum(1 for s in floor_seats if s["status"] == "free")
 
     with tcol2:
         st.markdown(
@@ -1156,10 +1678,67 @@ def main_app():
 
 
 # ─────────────────────────────────────────────────────────────
+# PAGE ROUTER
+# ─────────────────────────────────────────────────────────────
+#
+# main_app() is the single entry point for every post-login screen.
+# It does the shared work once (auth check, auto-refresh, CSS inject,
+# sidebar) and then dispatches to whichever page function the user
+# is currently viewing. Each page function renders its own top bar
+# via _render_top_bar(...) so the email + logout pair is present
+# everywhere (the requirement: "logout button should be next to the
+# email placement top right all time (for all pages)").
+
+# Map of page key → renderer function. Edit here when adding pages.
+PAGE_ROUTES = {
+    "home":     "landing_page",
+    "map":      "map_page",
+    "profile":  "profile_page",
+    "settings": "settings_page",
+}
+
+
+def main_app():
+    require_login()
+
+    # Auto-refresh every 30s so live countdowns + seat statuses stay
+    # fresh on every page (not just the map).
+    st_autorefresh(interval=30000, key="seat_refresh")
+
+    # Inject the global CSS shell once per page render.
+    _inject_app_shell()
+
+    # The left-hand navigation rail is always visible on every page.
+    _render_sidebar()
+
+    token = st.session_state["token"]
+
+    # Dispatch to the right page based on session state.
+    current = st.session_state.get("current_page", "home")
+    page_fn_name = PAGE_ROUTES.get(current, "landing_page")
+    page_fn = globals().get(page_fn_name)
+    if not callable(page_fn):
+        # Defensive fallback — should never trip unless PAGE_ROUTES
+        # is misconfigured. Land the user back on home.
+        st.session_state["current_page"] = "home"
+        landing_page(token)
+        return
+
+    page_fn(token)
+
+
+# ─────────────────────────────────────────────────────────────
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 def main():
-    st.set_page_config(page_title="HSG Study Spots", layout="wide")
+    st.set_page_config(
+        page_title="HSG Study Spots",
+        layout="wide",
+        # Make the new navigation rail visible by default — otherwise
+        # users on first visit have to click the tiny chevron to find
+        # the Home / Map / Profile / Settings tabs.
+        initial_sidebar_state="expanded",
+    )
     init_auth_state()
 
     if not SUPABASE_OK:
