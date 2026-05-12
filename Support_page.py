@@ -1,15 +1,17 @@
 """
 support_page.py
-Support tab for Chairie – contact info and FAQ.
+Support tab for Chairie. Contact info and FAQ.
 """
 
 import streamlit as st
 
 
 def render_support_page():
+"""Renders the support tab. Displays contact information, library opening hours, and FAQ section."""
+
     st.title("Support & Contact")
 
-    # ── Contact info ──────────────────────────────────────────
+    #Contact info
     st.subheader("Contact Us")
     st.write("📧 General:  support@chairie.app")
     st.write("🐛 Bugs:     bugs@chairie.app")
@@ -17,14 +19,14 @@ def render_support_page():
     st.write("📍 Address:  Dufourstrasse 50, 9000 St. Gallen")
     st.divider()
 
-    # ── Opening hours ─────────────────────────────────────────
+    #Opening hours
     st.subheader("Library Opening Hours")
     st.write("Monday – Friday:  08:00 – 22:00")
     st.write("Saturday:         09:00 – 18:00")
     st.write("Sunday:           10:00 – 18:00")
     st.divider()
 
-    # ── FAQ ───────────────────────────────────────────────────
+    #FAQ
     st.subheader("FAQ")
 
     with st.expander("How long can I reserve a seat?"):
