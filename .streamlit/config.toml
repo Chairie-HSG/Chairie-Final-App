@@ -1,0 +1,15 @@
+[theme]
+# Always render in light mode, no matter the user's OS preference.
+base = "light"
+
+# Brand palette wired into Streamlit's native theme tokens so built-in
+# widgets (sliders, date pickers, etc.) also pick up the Chairie look.
+primaryColor = "#4A7C2D"
+backgroundColor = "#FBF8F1"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1F2937"
+font = "sans serif"
+
+[client]
+# Hide the "Made with Streamlit" footer / dev toolbar in production.
+toolbarMode = "minimal"
