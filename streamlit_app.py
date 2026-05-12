@@ -48,18 +48,20 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────
-# QR CHECK-IN  (from qr_code.py)
-# Imported as-is, no modification to qr_code.py per the brief.
-# Graceful fallback: if zxingcpp / numpy / Pillow are missing
-# (or qr_code.py isn't on disk), the rest of the app still runs
-# and we just hide the QR section.
+# QR CHECK-IN  (utilities from qr_code.py)
+# qr_code.py is NOT modified — we just import its pure decoder
+# helpers (decode_qr + extract_seat_code) and drive the UI flow
+# from streamlit_app.py, since the new "scan any seat" behaviour
+# doesn't fit qr_code.show_checkin's reservation-validation flow.
+# Graceful fallback if zxing-cpp / numpy / Pillow are missing.
 # ─────────────────────────────────────────────────────────────
 try:
-    from qr_code import show_checkin as qr_show_checkin
+    from qr_code import decode_qr, extract_seat_code
     QR_CHECKIN_AVAILABLE = True
 except Exception:
     QR_CHECKIN_AVAILABLE = False
-    qr_show_checkin = None
+    decode_qr = None
+    extract_seat_code = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1286,6 +1288,185 @@ def _render_floor_stat_card(floor_choice, floor_stats):
     )
 
 
+# ─────────────────────────────────────────────────────────────
+# QR SCAN CARD  (lives on the map page, not in qr_code.py)
+# ─────────────────────────────────────────────────────────────
+# The original qr_code.show_checkin validates a scanned code against
+# an EXPECTED reservation. The new flow doesn't do that — the user
+# can scan any seat at any time, and we decide what happens based on
+# the scanned seat's live status. So the camera/UI flow lives here
+# in streamlit_app.py; qr_code.py is only used for its pure decoder
+# helpers (decode_qr + extract_seat_code), as it was written.
+def _resolve_scanned_code(token, seats, scanned_code):
+    """Look up `scanned_code` in `seats` and decide what to do.
+
+    Returns a small dict the UI can render directly:
+        {"kind": "ok" | "occupied" | "reserved" | "error",
+         "message": str}
+
+    Outcomes:
+      • Free seat            → check user in, return "ok"
+      • The user's own seat  → "ok" ("Successfully checked in" or
+                                "Already checked in")
+      • Occupied by someone  → "occupied" with remaining time
+      • Reserved by someone  → "reserved" with remaining time
+      • Code not in DB       → "error"
+    """
+    code_norm = (scanned_code or "").strip().lower()
+    if not code_norm:
+        return {"kind": "error", "message": "No seat code found in that QR."}
+
+    seat = next(
+        (s for s in seats if str(s.get("code", "")).strip().lower() == code_norm),
+        None,
+    )
+    if not seat:
+        return {
+            "kind": "error",
+            "message": f"Seat code '{scanned_code}' is not in our database.",
+        }
+
+    # Already checked in here.
+    if seat.get("occupied_by_me"):
+        return {
+            "kind": "ok",
+            "message": f"You're already checked in at seat {seat['code']}.",
+        }
+
+    # Occupied by someone else → show remaining time.
+    if seat["status"] == "occupied":
+        until = seat.get("occupied_until")
+        remaining = countdown(until) if until else "an unknown amount of time"
+        return {
+            "kind": "occupied",
+            "message": f"Seat {seat['code']} is occupied. ⏱ {remaining} remaining.",
+        }
+
+    # Reserved by someone else → show remaining time.
+    if seat["status"] == "reserved" and not seat.get("reserved_by_me"):
+        until = seat.get("reserved_until")
+        remaining = countdown(until) if until else "an unknown amount of time"
+        return {
+            "kind": "reserved",
+            "message": f"Seat {seat['code']} is reserved by another user. ⏱ {remaining}",
+        }
+
+    # Free, or reserved by the current user → attempt check-in.
+    result = check_in_from_qr(token, seat["id"])
+    if result.get("success"):
+        return {
+            "kind": "ok",
+            "message": f"✅ Successfully checked in to seat {seat['code']}.",
+        }
+    return {
+        "kind": "error",
+        "message": result.get("message", "Check-in failed."),
+    }
+
+
+def _render_qr_scan_card(token, seats, reserved_seat):
+    """Persistent 'Scan QR' card. The camera is NOT live until the
+    user clicks the 'Scan QR code' button — gated by session state.
+
+    Manual code entry is offered as a fallback for desktop users
+    or when the camera is unavailable.
+    """
+    if not QR_CHECKIN_AVAILABLE:
+        st.info(
+            "QR check-in is unavailable — install `zxing-cpp`, `numpy`, "
+            "and `Pillow`, and keep `qr_code.py` next to this app."
+        )
+        return
+
+    ss = st.session_state
+    # Init session state once.
+    ss.setdefault("qr_scanner_open", False)   # camera widget visible?
+    ss.setdefault("qr_camera_id",    0)       # bumped each scan → fresh widget
+    ss.setdefault("qr_last_result",  None)    # last scan outcome to display
+
+    # Section header — small contextual hint if user already has a reservation.
+    if reserved_seat:
+        hint = f"your reservation is seat {reserved_seat['code']}"
+    else:
+        hint = "scan any seat's QR code to check in"
+    st.markdown(
+        f"<div class='chairie-section-title'>Quick check-in "
+        f"<span class='hint'>{hint}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    # Show last scan result (if any) as a Streamlit alert.
+    if ss["qr_last_result"]:
+        res  = ss["qr_last_result"]
+        kind = res.get("kind", "info")
+        msg  = res.get("message", "")
+        if   kind == "ok":               st.success(msg)
+        elif kind in ("occupied",
+                      "reserved"):       st.warning(msg)
+        else:                            st.error(msg)
+        if st.button("Dismiss", key="qr_dismiss_btn"):
+            ss["qr_last_result"] = None
+            st.rerun()
+
+    # ─── Scanner CLOSED state ──────────────────────────────────────────
+    if not ss["qr_scanner_open"]:
+        col_scan, col_manual = st.columns([1, 2])
+        with col_scan:
+            if st.button(
+                "📷 Scan QR code",
+                type="primary",
+                key="qr_open_btn",
+                use_container_width=True,
+            ):
+                ss["qr_scanner_open"] = True
+                ss["qr_camera_id"]  += 1   # force a fresh camera widget
+                ss["qr_last_result"] = None
+                st.rerun()
+        with col_manual:
+            with st.expander("Or type the seat code printed under the QR",
+                             expanded=False):
+                code = st.text_input(
+                    "Seat code",
+                    placeholder="e.g. A2",
+                    key="qr_manual_code_input",
+                ).strip()
+                if code and st.button("Submit code", key="qr_manual_submit_btn"):
+                    ss["qr_last_result"] = _resolve_scanned_code(token, seats, code)
+                    st.rerun()
+        return
+
+    # ─── Scanner OPEN state ────────────────────────────────────────────
+    # The camera widget only renders here, so it never goes live until
+    # the user explicitly clicks the button above.
+    st.caption("Point your camera at the QR code on the seat.")
+    photo = st.camera_input(
+        "QR scanner",
+        key=f"qr_camera_{ss['qr_camera_id']}",  # unique key per scan session
+        label_visibility="collapsed",
+    )
+
+    if photo is not None:
+        from PIL import Image  # local import to avoid import errors when
+                               # qr deps aren't installed and this branch
+                               # is unreachable.
+        image     = Image.open(photo).convert("RGB")
+        qr_string = decode_qr(image)
+        if not qr_string:
+            st.warning(
+                "No QR code detected. Try a clearer angle, or use "
+                "the manual code option."
+            )
+        else:
+            scanned_code = extract_seat_code(qr_string)
+            ss["qr_last_result"]  = _resolve_scanned_code(token, seats, scanned_code)
+            ss["qr_scanner_open"] = False
+            st.rerun()
+
+    if st.button("Cancel", key="qr_cancel_btn"):
+        ss["qr_scanner_open"] = False
+        st.rerun()
+
+
 def landing_page(token):
     """Render the landing / home page that users see after login.
 
@@ -1499,6 +1680,13 @@ def map_page(token):
         return
 
     seats = seats_result["seats"]
+
+    # ── QR scan card  (always visible, near the reservation info) ────────
+    # Placed here — between the status banner and the map toolbar — so the
+    # check-in entry point is right next to the user's reservation
+    # information (when they have one), and still visible to everyone
+    # else. The camera is OFF until the user clicks "Scan QR code".
+    _render_qr_scan_card(token, seats, reserved_seat)
 
     # ── Toolbar row above the map: floor selector + free count + legend ──
     tcol1, tcol2, tcol3 = st.columns([2, 2, 5])
@@ -1722,63 +1910,6 @@ def map_page(token):
         # For the legacy Floor 1 path, still show the seat details — but
         # at the bottom, since clicks come from the button grid above.
         _render_seat_detail_panel(seats, token)
-
-    # ── QR CHECK-IN SECTION  (below the map, always visible) ────────────
-    # Uses qr_code.show_checkin() exactly as it's written in qr_code.py.
-    # The QR scanner is only meaningful when the user has an active
-    # reservation (status="reserved"); for other states we show a small
-    # placeholder so the page still feels complete.
-    st.markdown(
-        '<div class="chairie-section-title" style="margin-top: 28px;">'
-        'Check in to your seat '
-        '<span class="hint">scan the QR or type the code printed under it</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    if not QR_CHECKIN_AVAILABLE:
-        st.info(
-            "QR check-in is unavailable — install the required packages "
-            "(`zxing-cpp`, `numpy`, `Pillow`) and make sure `qr_code.py` "
-            "is in the same folder as this app."
-        )
-    elif reserved_seat:
-        # Active reservation → show the camera + manual-code flow.
-        # qr_show_checkin() is qr_code.show_checkin, imported as-is.
-        qr_show_checkin(
-            token,
-            reserved_seat["id"],
-            reserved_seat["code"],
-            check_in_from_qr,
-        )
-    elif checked_in_seat:
-        st.markdown(
-            f"""
-            <div class="chairie-placeholder">
-              <div class="chairie-placeholder-icon">✅</div>
-              <div class="chairie-placeholder-title">You're already checked in</div>
-              <div class="chairie-placeholder-sub">
-                Seat <strong>{checked_in_seat['code']}</strong> is yours
-                until your session ends.
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            """
-            <div class="chairie-placeholder">
-              <div class="chairie-placeholder-icon">📱</div>
-              <div class="chairie-placeholder-title">No active reservation</div>
-              <div class="chairie-placeholder-sub">
-                Reserve a seat from the map above first, then come back
-                here to scan the QR code on the seat.
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
 
 # ─────────────────────────────────────────────────────────────
