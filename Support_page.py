@@ -15,15 +15,15 @@ def render_support_page():
     st.subheader("Contact Us")
     st.write("📧 General:  support@chairie.app")
     st.write("🐛 Bugs:     bugs@chairie.app")
-    st.write("🏛️ Library:  library@unisg.ch  |  +41 71 224 22 96")
+    st.write("🏛️ Library:  library@unisg.ch  |  +41 71 224 22 70")
     st.write("📍 Address:  Dufourstrasse 50, 9000 St. Gallen")
     st.divider()
 
     #Opening hours
     st.subheader("Library Opening Hours")
     st.write("Monday – Friday:  08:00 – 22:00")
-    st.write("Saturday:         09:00 – 18:00")
-    st.write("Sunday:           10:00 – 18:00")
+    st.write("Saturday:         09:00 – 16:00")
+    st.write("Sunday:           closed")
     st.divider()
 
     #FAQ
