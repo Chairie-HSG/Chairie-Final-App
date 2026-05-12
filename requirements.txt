@@ -4,6 +4,7 @@ streamlit-autorefresh
 python-dotenv
 opencv-python-headless
 zxing-cpp
+numpy
 Pillow
 plotly>=5.18.0
 pillow>=10.0.0
