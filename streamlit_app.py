@@ -48,6 +48,21 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────
+# QR CHECK-IN  (from qr_code.py)
+# Imported as-is, no modification to qr_code.py per the brief.
+# Graceful fallback: if zxingcpp / numpy / Pillow are missing
+# (or qr_code.py isn't on disk), the rest of the app still runs
+# and we just hide the QR section.
+# ─────────────────────────────────────────────────────────────
+try:
+    from qr_code import show_checkin as qr_show_checkin
+    QR_CHECKIN_AVAILABLE = True
+except Exception:
+    QR_CHECKIN_AVAILABLE = False
+    qr_show_checkin = None
+
+
+# ─────────────────────────────────────────────────────────────
 # VISUAL SHELL
 # ─────────────────────────────────────────────────────────────
 def _inject_app_shell():
@@ -1454,7 +1469,12 @@ def map_page(token):
     _render_top_bar("Library Map")
 
     # ── User status banner ───────────────────────────────────────────────
-    status_result = get_user_status(token)
+    # Hoisted here (not nested inside the if-success branch) so the QR
+    # check-in section at the bottom of this page can reuse the same
+    # reservation info without re-querying Supabase.
+    reserved_seat   = None
+    checked_in_seat = None
+    status_result   = get_user_status(token)
     if status_result.get("success"):
         reserved_seat   = status_result.get("reserved_seat")
         checked_in_seat = status_result.get("checked_in_seat")
@@ -1702,6 +1722,63 @@ def map_page(token):
         # For the legacy Floor 1 path, still show the seat details — but
         # at the bottom, since clicks come from the button grid above.
         _render_seat_detail_panel(seats, token)
+
+    # ── QR CHECK-IN SECTION  (below the map, always visible) ────────────
+    # Uses qr_code.show_checkin() exactly as it's written in qr_code.py.
+    # The QR scanner is only meaningful when the user has an active
+    # reservation (status="reserved"); for other states we show a small
+    # placeholder so the page still feels complete.
+    st.markdown(
+        '<div class="chairie-section-title" style="margin-top: 28px;">'
+        'Check in to your seat '
+        '<span class="hint">scan the QR or type the code printed under it</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not QR_CHECKIN_AVAILABLE:
+        st.info(
+            "QR check-in is unavailable — install the required packages "
+            "(`zxing-cpp`, `numpy`, `Pillow`) and make sure `qr_code.py` "
+            "is in the same folder as this app."
+        )
+    elif reserved_seat:
+        # Active reservation → show the camera + manual-code flow.
+        # qr_show_checkin() is qr_code.show_checkin, imported as-is.
+        qr_show_checkin(
+            token,
+            reserved_seat["id"],
+            reserved_seat["code"],
+            check_in_from_qr,
+        )
+    elif checked_in_seat:
+        st.markdown(
+            f"""
+            <div class="chairie-placeholder">
+              <div class="chairie-placeholder-icon">✅</div>
+              <div class="chairie-placeholder-title">You're already checked in</div>
+              <div class="chairie-placeholder-sub">
+                Seat <strong>{checked_in_seat['code']}</strong> is yours
+                until your session ends.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="chairie-placeholder">
+              <div class="chairie-placeholder-icon">📱</div>
+              <div class="chairie-placeholder-title">No active reservation</div>
+              <div class="chairie-placeholder-sub">
+                Reserve a seat from the map above first, then come back
+                here to scan the QR code on the seat.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 # ─────────────────────────────────────────────────────────────
