@@ -895,13 +895,30 @@ def _render_seat_detail_panel(seats, token):
 FLOOR_META = {
     "Ground Floor": {
         "display":  "Library Ground Floor",
-        "matches":  {"0", "ground", "ground floor", "g", "gf"},
-        "capacity": 207,   # total physical seats (used as a fallback when
-                           # Supabase doesn't return any rows for the floor)
+        "matches":  {
+            # numeric/code variants
+            "0", "1", "g", "gf", "eg",
+            # word variants (English)
+            "ground", "ground floor", "groundfloor",
+            # word variants (German — HSG is in St. Gallen)
+            "erdgeschoss",
+            # exact key + display name (auto-include so DB can store either)
+            "ground floor", "library ground floor",
+        },
+        "capacity": 207,   # total physical seats; ALWAYS the denominator
     },
     "Floor 1": {
         "display":  "Library Upper Floor",
-        "matches":  {"1", "first", "first floor", "floor 1", "upper", "upper floor"},
+        "matches":  {
+            # numeric/code variants
+            "2", "u",
+            # word variants (English)
+            "first", "first floor", "floor 1", "upper", "upper floor", "level 1",
+            # word variants (German)
+            "obergeschoss", "1. og", "og1",
+            # exact key + display name
+            "floor 1", "library upper floor",
+        },
         "capacity": 296,
     },
 }
@@ -948,8 +965,14 @@ def _compute_floor_stats(seats, floor_choice):
     FLOOR_META[...]["capacity"] for `total` so the progress bar
     still has a sensible denominator (and `free` is treated as 0).
     """
-    rows = [s for s in seats if _seat_belongs_to_floor(s, floor_choice)]
-    total    = len(rows) or FLOOR_META[floor_choice]["capacity"]
+    rows     = [s for s in seats if _seat_belongs_to_floor(s, floor_choice)]
+    capacity = FLOOR_META[floor_choice]["capacity"]
+    matched  = len(rows)
+    # ALWAYS use the configured capacity as the denominator, even if we
+    # matched more rows than expected (e.g. seeded test data). Otherwise
+    # the upper floor was showing "2 / 2" when only 2 test seats existed,
+    # instead of "2 / 296" against its real capacity.
+    total    = max(capacity, matched)
     free     = sum(1 for s in rows if s.get("status") == "free")
     reserved = sum(1 for s in rows if s.get("status") == "reserved")
     occupied = sum(1 for s in rows if s.get("status") == "occupied")
@@ -1369,6 +1392,39 @@ def landing_page(token):
                 unsafe_allow_html=True,
             )
             _render_forecast_chart(floor_choice, floor_stats_cache[floor_choice])
+
+    # ── Debug expander (collapsed by default) ───────────────────────────
+    # Shows what (building, floor) values are actually stored in Supabase
+    # so we can verify floor-matching is correct. If a floor value isn't
+    # being matched to either floor in FLOOR_META, it shows up as
+    # "unmatched" here. Adjust FLOOR_META["…"]["matches"] accordingly.
+    with st.expander("🔧 Debug: floor values in database", expanded=False):
+        if not seats:
+            st.caption("No seats returned from Supabase.")
+        else:
+            from collections import Counter
+            tally = Counter()
+            for s in seats:
+                bld   = s.get("building", "?")
+                flr   = s.get("floor", "?")
+                # Which FLOOR_META key does this seat match?
+                matched_to = next(
+                    (k for k in FLOOR_META if _seat_belongs_to_floor(s, k)),
+                    "⚠️ UNMATCHED",
+                )
+                tally[(bld, repr(flr), matched_to)] += 1
+            st.caption(
+                "Each row is a distinct `(building, floor)` combination in your "
+                "`seats` table and which floor the app currently maps it to. "
+                "If a seat is mapped to the wrong floor, update "
+                "`FLOOR_META[…][\"matches\"]` near the top of the file."
+            )
+            st.table(
+                [
+                    {"building": b, "floor (raw value)": f, "mapped to": m, "count": c}
+                    for (b, f, m), c in sorted(tally.items(), key=lambda kv: -kv[1])
+                ]
+            )
 
 
 # ─────────────────────────────────────────────────────────────
