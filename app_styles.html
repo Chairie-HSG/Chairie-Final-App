@@ -13,6 +13,30 @@
     st.markdown(..., unsafe_allow_html=True).
 -->
 <style>
+  /* ─────────────────────────────────────────────────────────────
+     FORCE LIGHT MODE
+     Pinning color-scheme to light tells the browser to render form
+     controls, scrollbars, and other native UI in light variants
+     regardless of OS preference. Also overrides any dark-theme
+     attribute Streamlit might set if a user toggles it manually.
+     ───────────────────────────────────────────────────────────── */
+  :root,
+  html,
+  body,
+  [data-theme],
+  [data-theme="dark"] {
+    color-scheme: light !important;
+  }
+
+  /* Neutralise any prefers-color-scheme: dark rules from Streamlit's
+     own stylesheet so the brand background always wins. */
+  @media (prefers-color-scheme: dark) {
+    html, body, .stApp, [data-testid="stAppViewContainer"] {
+      background-color: var(--bg-page) !important;
+      color: var(--text-strong) !important;
+    }
+  }
+
   :root {
     /* Brand palette (the three official colors) */
     --chairie-green:        #4A7C2D;
@@ -94,6 +118,56 @@
   }
   section[data-testid="stSidebar"] .block-container {
     padding-top: 1.2rem;
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     SIDEBAR COLLAPSE / EXPAND CONTROLS
+     Streamlit ships a built-in toggle but in some versions it's
+     so subtle users don't notice it. Force it visible + branded.
+     ────────────────────────────────────────────────────────────*/
+  /* The "close" button shown inside the sidebar header when open. */
+  [data-testid="stSidebarCollapseButton"],
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="collapsedControl"] {
+    opacity: 1 !important;
+    visibility: visible !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+  /* Inside-sidebar close button: small green pill in the top-right. */
+  [data-testid="stSidebarCollapseButton"] button,
+  [data-testid="stSidebarCollapseButton"] {
+    background: var(--chairie-green-soft) !important;
+    color: var(--chairie-green) !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--chairie-green-soft) !important;
+    transition: background 0.15s ease;
+  }
+  [data-testid="stSidebarCollapseButton"] button:hover,
+  [data-testid="stSidebarCollapseButton"]:hover {
+    background: var(--chairie-green) !important;
+    color: #ffffff !important;
+    border-color: var(--chairie-green) !important;
+  }
+  /* The floating "open" chevron shown on the left edge when sidebar is
+     collapsed. Make it a clearly visible green pill. */
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="collapsedControl"] {
+    background: var(--chairie-green) !important;
+    color: #ffffff !important;
+    border-radius: 0 10px 10px 0 !important;
+    box-shadow: var(--shadow-md) !important;
+    padding: 10px 8px !important;
+    top: 18px !important;
+    left: 0 !important;
+    z-index: 999 !important;
+  }
+  [data-testid="stSidebarCollapsedControl"] svg,
+  [data-testid="collapsedControl"] svg,
+  [data-testid="stSidebarCollapseButton"] svg {
+    width: 18px;
+    height: 18px;
   }
 
   .chairie-sidebar-brand {
