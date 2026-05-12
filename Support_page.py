@@ -7,7 +7,7 @@ import streamlit as st
 
 
 def render_support_page():
-"""Renders the support tab. Displays contact information, library opening hours, and FAQ section."""
+    """Renders the support tab. Displays contact information, library opening hours, and FAQ section."""
 
     st.title("Support & Contact")
 
