@@ -133,98 +133,86 @@
   }
 
   /* ────────────────────────────────────────────────────────────
-     MOBILE MAP ZOOM CONTROLS
-     Two-finger pinch is unreliable across Streamlit + Plotly + the
-     few mobile browsers we can't fully test, so we ship our own
-     +/− buttons on mobile. Floating bottom-right of the viewport,
-     visible ONLY on the map page (the JS in the <script> block at
-     the bottom of this file injects/hides them based on the
-     #chairie-map-page-marker added by streamlit_app.map_page).
+     MAP ZOOM TOOLBAR
+     interactive_map._render_zoom_bar() wraps the buttons in
+     st.container(key="chairie_map_zoom_bar"), which Streamlit
+     renders with the class `.st-key-chairie_map_zoom_bar`. The
+     rules below turn that container into a compact pill bar
+     sitting directly above the map.
 
-     The buttons set a CSS variable --map-zoom on <html>; the rule
-     below picks it up and rescales the Plotly chart. `zoom:` (not
-     `transform: scale`) is used on purpose: in Chromium browsers
-     `zoom` also adjusts click coordinates, so tapping a seat after
-     zooming still selects the right one — `transform: scale` would
-     break click targeting.
+     Why this lives here and not in Python:
+     Streamlit's default button styling is fine but doesn't make
+     a tight, centered toolbar — we need to tighten the column
+     gaps, round the buttons, and tint them with the brand
+     palette. All purely visual, no JS.
      ────────────────────────────────────────────────────────────*/
-
-  /* Default: controls are hidden everywhere. The media query below
-     turns them on for mobile, and the JS toggles per-page. */
-  .chairie-zoom-controls {
-    display: none;
+  .st-key-chairie_map_zoom_bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-xs);
+    padding: 6px 8px;
+    margin: 4px 0 10px 0;
+  }
+  /* Tighten the column gaps inside the bar so the buttons read
+     as one toolbar, not four scattered items. */
+  .st-key-chairie_map_zoom_bar [data-testid="stHorizontalBlock"] {
+    gap: 6px !important;
+  }
+  /* Style every button inside the bar identically — they're already
+     differentiated by their label (− / + / ↺). */
+  .st-key-chairie_map_zoom_bar .stButton > button {
+    background: var(--chairie-green);
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    height: 42px;
+    font-size: 1.3rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    box-shadow: var(--shadow-xs);
+    transition: transform 0.08s ease, background 0.12s ease;
+  }
+  .st-key-chairie_map_zoom_bar .stButton > button:hover {
+    background: var(--chairie-green-hover);
+  }
+  .st-key-chairie_map_zoom_bar .stButton > button:active {
+    transform: scale(0.94);
+  }
+  .st-key-chairie_map_zoom_bar .stButton > button:disabled {
+    background: var(--bg-subtle);
+    color: var(--text-tertiary);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+  /* The reset button is the last button in the bar — paint it
+     honey so users see it's a different kind of action than
+     +/- zoom. */
+  .st-key-chairie_map_zoom_bar [data-testid="stHorizontalBlock"]
+    > div:last-of-type .stButton > button {
+    background: var(--chairie-honey);
+    color: #5c4100;
+    font-size: 1.1rem;
+  }
+  .st-key-chairie_map_zoom_bar [data-testid="stHorizontalBlock"]
+    > div:last-of-type .stButton > button:hover {
+    background: var(--chairie-honey-hover);
   }
 
-  @media (max-width: 768px) {
-    /* Show controls (the JS still hides them on non-map pages). */
-    .chairie-zoom-controls {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-      position: fixed;
-      right: 14px;
-      bottom: 90px;       /* clear of the support footer if scrolled to bottom */
-      z-index: 1000;
-      background: var(--bg-card);
-      border: 1px solid var(--border-soft);
-      border-radius: 14px;
-      box-shadow: var(--shadow-md);
-      padding: 8px;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-
-    .chairie-zoom-btn {
-      width: 48px;
-      height: 48px;
-      border-radius: 10px;
-      background: var(--chairie-green);
-      color: #ffffff;
-      border: none;
-      font-size: 1.6rem;
-      font-weight: 700;
-      line-height: 1;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      touch-action: manipulation;       /* fast tap, no double-tap zoom delay */
-      transition: transform 0.08s ease, background 0.12s ease;
-      box-shadow: var(--shadow-xs);
-    }
-    .chairie-zoom-btn:active {
-      transform: scale(0.92);
-      background: var(--chairie-green-hover);
-    }
-    /* Disabled state when at min/max zoom */
-    .chairie-zoom-btn[aria-disabled="true"] {
-      background: var(--bg-subtle);
-      color: var(--text-tertiary);
-      box-shadow: none;
-      cursor: not-allowed;
-    }
-    /* The reset button (honey) reads as a secondary action */
-    .chairie-zoom-btn.chairie-zoom-reset {
-      background: var(--chairie-honey);
-      color: #5c4100;
-      font-size: 1.05rem;
-      font-weight: 600;
-    }
-    .chairie-zoom-btn.chairie-zoom-reset:active {
-      background: var(--chairie-honey-hover);
-    }
-
-    .chairie-zoom-level {
-      font-variant-numeric: tabular-nums;
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: var(--text-secondary);
-      padding: 2px 0;
-      min-width: 48px;
-      text-align: center;
-      letter-spacing: 0.02em;
-    }
+  /* Percentage label sitting between − and +. */
+  .chairie-zoom-pct {
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--text-strong);
+    background: var(--bg-subtle);
+    border-radius: 10px;
+    letter-spacing: 0.02em;
   }
 
   /* Keep Streamlit's header at its DEFAULT size and position.
@@ -1260,141 +1248,6 @@
   parentWin.__chairieViewportTimer = setInterval(fixViewport, 500);
 
   // ─────────────────────────────────────────────────────────────
-  // MOBILE MAP ZOOM (+/-)  controls
-  // ─────────────────────────────────────────────────────────────
-  // Native pinch-zoom is unreliable across Streamlit + Plotly + the
-  // mobile browsers we can't fully test, so we ship our own simple
-  // +/− buttons. They appear ONLY on:
-  //   • mobile width (<= 768px)
-  //   • the map page  (detected via the hidden #chairie-map-page-marker
-  //     emitted from streamlit_app.map_page)
-  //
-  // HOW THE ZOOM IS ACTUALLY APPLIED:
-  // We call Plotly's own relayout API (parentWin.Plotly.relayout) to
-  // change the chart's visible x/y axis ranges. Smaller range =
-  // zoomed in. This is the same mechanism Plotly itself uses for
-  // pinch/scroll-zoom, so click targeting, pan, and seat selection
-  // all keep working correctly after a zoom.
-  //
-  // Earlier attempts using CSS `zoom:` and `transform: scale()` on
-  // the chart container failed because Plotly renders to a canvas
-  // sized in pixels — CSS scaling on the wrapper doesn't grow the
-  // canvas, it just stretches its bitmap. relayout is the real fix.
-
-  const ZOOM = { current: 1.0, MIN: 0.5, MAX: 3.0, STEP: 0.25 };
-
-  function applyZoomToMap() {
-    // PRIMARY: Plotly's relayout API — proper zoom by changing the
-    // visible data range. Falls through to the CSS fallback below
-    // if Plotly isn't exposed as window.Plotly (unlikely but
-    // possible depending on Streamlit version).
-    try {
-      const Plotly = parentWin.Plotly;
-      if (Plotly && typeof Plotly.relayout === "function") {
-        const plots = doc.querySelectorAll(".js-plotly-plot");
-        let applied = false;
-        plots.forEach(function (plot) {
-          const layout = plot._fullLayout || plot.layout;
-          if (!layout || !layout.xaxis || !layout.yaxis) return;
-
-          // Capture the chart's INITIAL axis range the first time we
-          // see this plot. Everything is calculated relative to that
-          // so reset (zoom=1) always returns to the original view.
-          if (!plot._chairieInitialRange) {
-            const xr = layout.xaxis.range;
-            const yr = layout.yaxis.range;
-            if (!xr || !yr) return;
-            plot._chairieInitialRange = {
-              x: [xr[0], xr[1]],
-              y: [yr[0], yr[1]],
-            };
-          }
-          const init  = plot._chairieInitialRange;
-          const cx    = (init.x[0] + init.x[1]) / 2;
-          const cy    = (init.y[0] + init.y[1]) / 2;
-          const xspan = (init.x[1] - init.x[0]) / ZOOM.current / 2;
-          const yspan = (init.y[1] - init.y[0]) / ZOOM.current / 2;
-          Plotly.relayout(plot, {
-            "xaxis.range": [cx - xspan, cx + xspan],
-            "yaxis.range": [cy - yspan, cy + yspan],
-          });
-          applied = true;
-        });
-        if (applied) return;
-      }
-    } catch (e) { /* fall through to CSS fallback */ }
-
-    // FALLBACK: CSS transform on the inner Plotly node. Click
-    // coordinates may drift slightly at high zoom levels, but at
-    // least the visual zoom works on browsers where Plotly's global
-    // isn't exposed.
-    doc.querySelectorAll(".js-plotly-plot").forEach(function (plot) {
-      plot.style.transform       = "scale(" + ZOOM.current + ")";
-      plot.style.transformOrigin = "top left";
-    });
-  }
-
-  function buildZoomControls() {
-    const controls = doc.createElement("div");
-    controls.className = "chairie-zoom-controls";
-    controls.innerHTML =
-      '<button class="chairie-zoom-btn"  data-action="in"    aria-label="Zoom in">+</button>' +
-      '<div    class="chairie-zoom-level">100%</div>' +
-      '<button class="chairie-zoom-btn"  data-action="out"   aria-label="Zoom out">−</button>' +
-      '<button class="chairie-zoom-btn chairie-zoom-reset" ' +
-              'data-action="reset" aria-label="Reset zoom">100%</button>';
-
-    function refreshLabel() {
-      const lbl = controls.querySelector(".chairie-zoom-level");
-      if (lbl) lbl.textContent = Math.round(ZOOM.current * 100) + "%";
-      const inBtn  = controls.querySelector('[data-action="in"]');
-      const outBtn = controls.querySelector('[data-action="out"]');
-      if (inBtn)  inBtn .setAttribute("aria-disabled", ZOOM.current >= ZOOM.MAX);
-      if (outBtn) outBtn.setAttribute("aria-disabled", ZOOM.current <= ZOOM.MIN);
-    }
-
-    controls.addEventListener("click", function (e) {
-      const btn = e.target.closest(".chairie-zoom-btn");
-      if (!btn || btn.getAttribute("aria-disabled") === "true") return;
-      const action = btn.dataset.action;
-      if (action === "in")    ZOOM.current = Math.min(ZOOM.MAX, ZOOM.current + ZOOM.STEP);
-      if (action === "out")   ZOOM.current = Math.max(ZOOM.MIN, ZOOM.current - ZOOM.STEP);
-      if (action === "reset") ZOOM.current = 1.0;
-      refreshLabel();
-      applyZoomToMap();
-    });
-
-    refreshLabel();
-    return controls;
-  }
-
-  function syncZoomControls() {
-    const isMobile  = window.innerWidth <= 768;
-    const isMapPage = !!doc.getElementById("chairie-map-page-marker");
-    let controls    = doc.querySelector(".chairie-zoom-controls");
-
-    if (!isMobile || !isMapPage) {
-      // Off the map page: hide controls and reset zoom so the
-      // user doesn't return later with a stale scaled view.
-      if (controls) controls.remove();
-      if (ZOOM.current !== 1.0) {
-        ZOOM.current = 1.0;
-        applyZoomToMap();
-      }
-      return;
-    }
-
-    // On the map page on mobile — ensure controls exist.
-    if (!controls && doc.body) {
-      doc.body.appendChild(buildZoomControls());
-    }
-  }
-
-  // Run once now, then on the same polling interval as the viewport
-  // fix below so we catch Streamlit page transitions.
-  syncZoomControls();
-
-  // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
   if (parentWin.__chairieCountdownInterval) {
@@ -1413,9 +1266,6 @@
     });
   }
   tick();
-  parentWin.__chairieCountdownInterval = setInterval(function () {
-    tick();
-    syncZoomControls();
-  }, 1000);
+  parentWin.__chairieCountdownInterval = setInterval(tick, 1000);
 })();
 </script>
