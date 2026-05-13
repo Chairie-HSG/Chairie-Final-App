@@ -1,14 +1,17 @@
 """
 streamlit_app.py
 
-All-in-one Streamlit seat booking app for HSG Library.
-Combines:
-  - Among-US-Group core logic (seat_manager.py, timer.py, storage.py)
-  - indexnew.html layout and design (HTML-only, no separate CSS files)
-  - Supabase backend (api.py, supabase_client.py, auth.py)
-  - Library floor-plan images (Library_GFloor.jpg, Library_1Floor.jpg)
-"""
+Main App File
 
+Contains:
+- Supabase login/signup
+- live seat reservation and check-in logic
+- interactive floor maps
+- QR/manual check-in
+- home dashboard with live statistics
+- ML occupancy forecast
+- profile study-time statistics
+"""
 # ─────────────────────────────────────────────────────────────
 # IMPORTS
 # ─────────────────────────────────────────────────────────────
@@ -464,6 +467,14 @@ def check_in_from_qr(token, seat_id):
             }
         ).eq("id", seat_id).execute()
 
+        supabase.table("study_sessions").insert({
+            "user_email": email,
+            "seat_id": seat["id"],
+            "seat_code": seat["code"],
+            "floor": seat["floor"],
+            "started_at": _to_iso(_now()),
+        }).execute()
+
         return {
             "success": True,
             "message": f"Checked in to seat {seat['code']}.",
@@ -485,11 +496,34 @@ def release_current_seat(token):
             supabase.table("seats").select("*").eq("occupied_by", email).eq("status", "occupied").limit(1).execute()
         )
         if occupied.data:
+            session_res = (
+                supabase.table("study_sessions")
+                .select("*")
+                .eq("user_email", email)
+                .is_("ended_at", "null")
+                .order("started_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+
+            if session_res.data:
+                session = session_res.data[0]
+
+                started = dt.fromisoformat(session["started_at"])
+                ended = _now()
+
+                duration_minutes = int((ended - started).total_seconds() / 60)
+
+                supabase.table("study_sessions").update({
+                    "ended_at": _to_iso(ended),
+                    "duration_minutes": duration_minutes,
+                }).eq("id", session["id"]).execute()
+
             supabase.table("seats").update(
                 {"status": "free", "occupied_by": None, "occupied_until": None}
             ).eq("id", occupied.data[0]["id"]).execute()
-            return {"success": True, "message": "Seat released."}
 
+            return {"success": True, "message": "Seat released."}
         reserved = (
             supabase.table("seats").select("*").eq("reserved_by", email).eq("status", "reserved").limit(1).execute()
         )
@@ -986,7 +1020,7 @@ FLOOR_META = {
             "erdgeschoss",                                # German (HSG is in St. Gallen)
             "library ground floor",                       # display-name fallback
         },
-        "capacity": 207,   # total physical seats; ALWAYS the denominator
+        "capacity": 189,   # total physical seats; ALWAYS the denominator
     },
     "Floor 1": {
         "display":  "Library Upper Floor",
@@ -998,7 +1032,7 @@ FLOOR_META = {
             "obergeschoss", "1. og", "og1",               # German
             "library upper floor",                        # display-name fallback
         },
-        "capacity": 296,
+        "capacity": 307,
     },
 }
 
@@ -1209,29 +1243,93 @@ def _render_top_bar(page_label):
 #      occupancy lands in Supabase, swap _mock_forecast_series()
 #      for a real fetch and the rest of the page keeps working.
 
-def _mock_forecast_series(floor_choice):
-    """Generate a stable, plausible hourly occupancy curve (8h–21h).
+def _ml_forecast_series(floor_choice):
+    try:
+        import pandas as pd
+        from sklearn.ensemble import RandomForestRegressor
 
-    Returns a list of 14 floats in 0..1 indexed by hour 8..21.
-    The curve peaks around 10–11am and again 14–15pm to match
-    typical library traffic. Different floors get slightly
-    different shapes so the two charts don't look identical.
+        response = (
+            supabase.table("occupancy_snapshots")
+            .select("*")
+            .eq("floor", floor_choice)
+            .order("created_at")
+            .execute()
+        )
 
-    Pure-Python (no numpy) so we don't add a dependency just for
-    placeholder data. Replace this with a Supabase query when real
-    history is available.
+        rows = response.data
+
+        if not rows or len(rows) < 20:
+            return None
+
+        df = pd.DataFrame(rows)
+        df["created_at"] = pd.to_datetime(df["created_at"])
+        df["hour"] = df["created_at"].dt.hour
+        df["day_of_week"] = df["created_at"].dt.dayofweek
+
+        X = df[["hour", "day_of_week"]]
+        y = df["occupied_percent"]
+
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X, y)
+
+        hours = list(range(8, 22))
+        current_day = dt.now(timezone.utc).weekday()
+
+        future_hours = pd.DataFrame({
+            "hour": hours,
+            "day_of_week": [current_day] * len(hours)
+        })
+
+        predictions = model.predict(future_hours)
+
+        return [
+            (hour, max(0, min(float(prediction) / 100, 1)))
+            for hour, prediction in zip(hours, predictions)
+        ]
+
+    except Exception as e:
+        st.warning(f"Could not generate ML forecast: {e}")
+        return None
+
+def save_real_occupancy_snapshot():
     """
-    hours = list(range(8, 22))
-    if floor_choice == "Ground Floor":
-        # Wider peak, busier overall
-        base = [0.30, 0.62, 0.78, 0.72, 0.58, 0.70, 0.74, 0.72,
-                0.66, 0.58, 0.40, 0.22, 0.12, 0.06]
-    else:
-        # Quieter mornings, peak 1–2pm
-        base = [0.20, 0.55, 0.68, 0.66, 0.52, 0.74, 0.72, 0.66,
-                0.60, 0.50, 0.32, 0.18, 0.10, 0.05]
-    return list(zip(hours, base[: len(hours)]))
+    Saves the current real seat occupancy into occupancy_snapshots.
+    This is what gives the ML model real historical data over time.
+    """
+    if not SUPABASE_OK:
+        return
 
+    try:
+        response = supabase.table("seats").select("*").execute()
+        seats = response.data
+
+        for floor_choice in ["Ground Floor", "Floor 1"]:
+            floor_seats = [
+                seat for seat in seats
+                if _seat_belongs_to_floor(seat, floor_choice)
+            ]
+
+            total_count = len(floor_seats)
+            reserved_count = sum(1 for s in floor_seats if s["status"] == "reserved")
+            occupied_count = sum(1 for s in floor_seats if s["status"] == "occupied")
+            free_count = sum(1 for s in floor_seats if s["status"] == "free")
+
+            if total_count == 0:
+                occupied_percent = 0
+            else:
+                occupied_percent = round(((reserved_count + occupied_count) / total_count) * 100, 2)
+
+            supabase.table("occupancy_snapshots").insert({
+                "floor": floor_choice,
+                "free_count": free_count,
+                "reserved_count": reserved_count,
+                "occupied_count": occupied_count,
+                "total_count": total_count,
+                "occupied_percent": occupied_percent,
+            }).execute()
+
+    except Exception:
+        pass
 
 def _render_forecast_chart(floor_choice, floor_stats):
     """Render the "Today's forecast" bar chart for a single floor.
@@ -1241,7 +1339,11 @@ def _render_forecast_chart(floor_choice, floor_stats):
     when it's getting busy, red when it's full. The other bars are
     a calm dark green so the eye is pulled to "right now".
     """
-    series = _mock_forecast_series(floor_choice)
+    series = _ml_forecast_series(floor_choice)
+
+    if series is None:
+        st.info("Not enough historical data yet for this floor.")
+        return
     hours      = [h for h, _ in series]
     occupancy  = [pct for _, pct in series]
 
@@ -1278,7 +1380,7 @@ def _render_forecast_chart(floor_choice, floor_stats):
         showlegend=False,
     ))
     fig.update_layout(
-        title=None,
+        title_text="",
         margin=dict(l=10, r=10, t=10, b=10),
         height=220,
         plot_bgcolor="rgba(0,0,0,0)",
@@ -1652,28 +1754,105 @@ def landing_page(token):
             )
             _render_forecast_chart(floor_choice, floor_stats_cache[floor_choice])
 
+def get_user_study_stats(token):
+    """
+    Returns study statistics for the logged-in user.
+    """
+    try:
+        email = _email_from_token(token)
 
+        if not email:
+            return None
+
+        response = (
+            supabase.table("study_sessions")
+            .select("*")
+            .eq("user_email", email)
+            .not_.is_("duration_minutes", "null")
+            .execute()
+        )
+
+        sessions = response.data
+
+        if not sessions:
+            return {
+                "weekly_hours": 0,
+                "total_hours": 0,
+                "sessions": 0,
+            }
+
+        now = dt.now(timezone.utc)
+
+        weekly_minutes = 0
+        total_minutes = 0
+
+        for s in sessions:
+            total_minutes += s["duration_minutes"]
+
+            started = dt.fromisoformat(s["started_at"])
+
+            if (now - started).days <= 7:
+                weekly_minutes += s["duration_minutes"]
+
+        return {
+            "weekly_hours": round(weekly_minutes / 60, 1),
+            "total_hours": round(total_minutes / 60, 1),
+            "sessions": len(sessions),
+        }
+
+    except Exception as e:
+        st.error(f"Stats error: {e}")
+        return None
 # ─────────────────────────────────────────────────────────────
 # PROFILE PAGE  (placeholder for now)
 # ─────────────────────────────────────────────────────────────
 def profile_page(token):
-    """Empty placeholder per the spec — to be fleshed out later."""
+
     _render_top_bar("Profile")
+
+    stats = get_user_study_stats(token)
+
     st.markdown(
-        f"""
-        <div class="chairie-placeholder">
-          <div class="chairie-placeholder-icon">👤</div>
-          <div class="chairie-placeholder-title">Your profile</div>
-          <div class="chairie-placeholder-sub">
-            Signed in as <strong>{st.session_state.get("username", "anonymous")}</strong>.
-            Profile details, reservation history and preferences will live
-            here. Coming soon.
-          </div>
+        """
+        <div class="chairie-section-title">
+            Your study statistics
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    if not stats:
+        st.info("No study statistics yet.")
+        return
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.metric(
+            "Hours studied this week",
+            f"{stats['weekly_hours']}h"
+        )
+
+    with c2:
+        st.metric(
+            "Total study hours",
+            f"{stats['total_hours']}h"
+        )
+
+    with c3:
+        st.metric(
+            "Study sessions",
+            stats["sessions"]
+        )
+
+    st.markdown("---")
+
+    st.markdown(
+        f"""
+        ### Logged in as
+        `{st.session_state.get("username")}`
+        """
+    )
 
 # ─────────────────────────────────────────────────────────────
 # SETTINGS PAGE  (placeholder for now)
@@ -2044,6 +2223,14 @@ def main_app():
     _render_sidebar()
 
     token = st.session_state["token"]
+
+    last_snapshot = st.session_state.get("last_snapshot_time")
+
+    now = dt.now(timezone.utc)
+
+    if not last_snapshot or (now - last_snapshot).total_seconds() > 1800:
+        save_real_occupancy_snapshot()
+        st.session_state["last_snapshot_time"] = now
 
     # Dispatch to the right page based on session state.
     current      = st.session_state.get("current_page", "home")

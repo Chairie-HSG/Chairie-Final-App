@@ -486,3 +486,99 @@ def signup_request(email, password):
             "success": False,
             "message": str(e)
         }
+def get_dashboard_stats():
+    # This function calculates the current percentage of seats that are taken.
+    # "Taken" means either reserved or occupied.
+    try:
+        response = supabase.table("seats").select("*").execute()
+        seats = response.data
+
+        total = len(seats)
+        taken = sum(
+            1 for seat in seats
+            if seat["status"] in ["reserved", "occupied"]
+        )
+
+        if total == 0:
+            percent_taken = 0
+        else:
+            percent_taken = round((taken / total) * 100, 2)
+
+        return {
+            "success": True,
+            "total": total,
+            "taken": taken,
+            "free": total - taken,
+            "percent_taken": percent_taken,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }
+
+
+def get_occupancy_prediction():
+    # This function creates a simple prediction of busy times.
+    # It uses historical occupancy snapshots from Supabase.
+    try:
+        import pandas as pd
+        from sklearn.ensemble import RandomForestRegressor
+
+        response = (
+            supabase.table("occupancy_snapshots")
+            .select("*")
+            .order("created_at")
+            .execute()
+        )
+
+        rows = response.data
+
+        # We need at least a few rows before machine learning makes sense.
+        if len(rows) < 5:
+            return {
+                "success": False,
+                "message": "Not enough historical data yet. Use the app for a while so it can collect data."
+            }
+
+        df = pd.DataFrame(rows)
+        df["created_at"] = pd.to_datetime(df["created_at"])
+
+        # The model learns from hour of day and day of week.
+        df["hour"] = df["created_at"].dt.hour
+        df["day_of_week"] = df["created_at"].dt.dayofweek
+
+        X = df[["hour", "day_of_week"]]
+        y = df["occupied_percent"]
+
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X, y)
+
+        # Predict occupancy for each hour today.
+        current_day = datetime.now(timezone.utc).weekday()
+
+        future_hours = pd.DataFrame({
+            "hour": list(range(24)),
+            "day_of_week": [current_day] * 24
+        })
+
+        predictions = model.predict(future_hours)
+
+        prediction_rows = []
+        for hour, prediction in zip(range(24), predictions):
+            prediction_rows.append({
+                "hour": f"{hour:02d}:00",
+                "predicted_occupied_percent": round(float(prediction), 2)
+            })
+
+        return {
+            "success": True,
+            "predictions": prediction_rows
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }

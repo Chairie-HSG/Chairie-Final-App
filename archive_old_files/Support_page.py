@@ -40,3 +40,6 @@ def render_support_page():
 
     with st.expander("What if the QR scanner doesn't work?"):
         st.write("Make sure you're logged in and camera permission is granted. If it still fails, email bugs@chairie.app.")
+
+    with st.expander("How do I reset my password?"):
+        st.write("Use the 'Forgot password?' link on the login page and check your email for a reset link.")

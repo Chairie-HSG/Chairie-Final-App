@@ -9,6 +9,7 @@ def init_auth_state(): #default state for authentification
         "token": None,
         "selected_seat_id": None,
         "auth_mode": "login",      # can be "login" or "signup"
+        "page": "dashboard",
     }
 
     for key, value in defaults.items(): #Empty 

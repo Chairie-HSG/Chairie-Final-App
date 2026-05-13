@@ -8,3 +8,5 @@ numpy
 Pillow
 plotly>=5.18.0
 pillow>=10.0.0
+pandas
+scikit-learn
