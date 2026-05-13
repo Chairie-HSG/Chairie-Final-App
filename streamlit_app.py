@@ -66,6 +66,21 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────
+# SUPPORT FOOTER  (rendered at the bottom of every page)
+# Support_page.py is imported as-is — its render_support_page()
+# call is invoked by _render_support_footer() below. Same graceful
+# fallback pattern as the other optional modules: if the file isn't
+# present, the support section is silently skipped.
+# ─────────────────────────────────────────────────────────────
+try:
+    from Support_page import render_support_page
+    SUPPORT_PAGE_AVAILABLE = True
+except Exception:
+    SUPPORT_PAGE_AVAILABLE = False
+    render_support_page = None
+
+
+# ─────────────────────────────────────────────────────────────
 # VISUAL SHELL
 # ─────────────────────────────────────────────────────────────
 def _inject_app_styles():
@@ -1988,6 +2003,30 @@ PAGE_ROUTES = {
 }
 
 
+def _render_support_footer():
+    """Render the Support & Contact section at the bottom of every page.
+
+    Calls render_support_page() from Support_page.py — that file is
+    used exactly as uploaded (no modifications). A thin divider is
+    drawn first so the support block is visually separated from the
+    page's main content.
+
+    Silent no-op if the Support_page module isn't importable (e.g. it
+    wasn't deployed alongside this file), so a missing module never
+    breaks the rest of the app.
+    """
+    if not SUPPORT_PAGE_AVAILABLE:
+        return
+
+    # Thin divider — uses the same border color the rest of the app
+    # cards use, so it blends with the design system.
+    st.markdown(
+        '<hr class="chairie-support-divider" />',
+        unsafe_allow_html=True,
+    )
+    render_support_page()
+
+
 def main_app():
     require_login()
 
@@ -2017,6 +2056,11 @@ def main_app():
         page_fn = landing_page
 
     page_fn(token)
+
+    # Support & contact section at the bottom of EVERY page (Home, Map,
+    # Profile, Settings). Uses Support_page.render_support_page() — that
+    # file is imported as-is and untouched.
+    _render_support_footer()
 
     # Inject the countdown JS LAST. It rides in a zero-height iframe
     # component; placing it at the bottom of the page means any leftover
