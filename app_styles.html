@@ -132,89 +132,6 @@
     touch-action: pinch-zoom !important;
   }
 
-  /* ────────────────────────────────────────────────────────────
-     MAP ZOOM TOOLBAR
-     interactive_map._render_zoom_bar() wraps the buttons in
-     st.container(key="chairie_map_zoom_bar"), which Streamlit
-     renders with the class `.st-key-chairie_map_zoom_bar`. The
-     rules below turn that container into a compact pill bar
-     sitting directly above the map.
-
-     Why this lives here and not in Python:
-     Streamlit's default button styling is fine but doesn't make
-     a tight, centered toolbar — we need to tighten the column
-     gaps, round the buttons, and tint them with the brand
-     palette. All purely visual, no JS.
-     ────────────────────────────────────────────────────────────*/
-  .st-key-chairie_map_zoom_bar {
-    background: var(--bg-card);
-    border: 1px solid var(--border-soft);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-xs);
-    padding: 6px 8px;
-    margin: 4px 0 10px 0;
-  }
-  /* Tighten the column gaps inside the bar so the buttons read
-     as one toolbar, not four scattered items. */
-  .st-key-chairie_map_zoom_bar [data-testid="stHorizontalBlock"] {
-    gap: 6px !important;
-  }
-  /* Style every button inside the bar identically — they're already
-     differentiated by their label (− / + / ↺). */
-  .st-key-chairie_map_zoom_bar .stButton > button {
-    background: var(--chairie-green);
-    color: #ffffff;
-    border: none;
-    border-radius: 10px;
-    height: 42px;
-    font-size: 1.3rem;
-    font-weight: 700;
-    line-height: 1;
-    padding: 0;
-    box-shadow: var(--shadow-xs);
-    transition: transform 0.08s ease, background 0.12s ease;
-  }
-  .st-key-chairie_map_zoom_bar .stButton > button:hover {
-    background: var(--chairie-green-hover);
-  }
-  .st-key-chairie_map_zoom_bar .stButton > button:active {
-    transform: scale(0.94);
-  }
-  .st-key-chairie_map_zoom_bar .stButton > button:disabled {
-    background: var(--bg-subtle);
-    color: var(--text-tertiary);
-    box-shadow: none;
-    cursor: not-allowed;
-  }
-  /* The reset button is the last button in the bar — paint it
-     honey so users see it's a different kind of action than
-     +/- zoom. */
-  .st-key-chairie_map_zoom_bar [data-testid="stHorizontalBlock"]
-    > div:last-of-type .stButton > button {
-    background: var(--chairie-honey);
-    color: #5c4100;
-    font-size: 1.1rem;
-  }
-  .st-key-chairie_map_zoom_bar [data-testid="stHorizontalBlock"]
-    > div:last-of-type .stButton > button:hover {
-    background: var(--chairie-honey-hover);
-  }
-
-  /* Percentage label sitting between − and +. */
-  .chairie-zoom-pct {
-    height: 42px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-variant-numeric: tabular-nums;
-    font-weight: 700;
-    font-size: 1rem;
-    color: var(--text-strong);
-    background: var(--bg-subtle);
-    border-radius: 10px;
-    letter-spacing: 0.02em;
-  }
-
   /* Keep Streamlit's header at its DEFAULT size and position.
      It gives the page a natural top inset, and (importantly) it's
      where the sidebar's expand chevron lives. Just blend its
@@ -1248,6 +1165,40 @@
   parentWin.__chairieViewportTimer = setInterval(fixViewport, 500);
 
   // ─────────────────────────────────────────────────────────────
+  // MOBILE PINCH-ZOOM ON THE SEAT MAP
+  // ─────────────────────────────────────────────────────────────
+  // Plotly's touch handler claims the first finger for one-finger
+  // pan, which means it never recognizes a two-finger pinch. To
+  // get pinch working we need `dragmode: false` — but only on
+  // mobile, because on desktop we want to KEEP drag-to-pan.
+  //
+  // What we do: every second, find the seat-map Plotly chart and,
+  // if we're on a narrow viewport (≤ 768px) and the chart's
+  // current dragmode is still "pan", call Plotly.relayout to
+  // switch it off. Streamlit's 60-second auto-refresh re-renders
+  // the chart with dragmode="pan" each time; this poll catches
+  // that and re-applies the override within ~1s.
+  //
+  // The CSS `touch-action: pinch-zoom` rule near the top of this
+  // file does the other half of the job — it tells the browser
+  // it can also claim pinch as a native gesture if Plotly's
+  // gesture detection ever fails to grab it.
+  function enableMobilePinch() {
+    if (window.innerWidth > 768) return;             // desktop = no-op
+    const Plotly = parentWin.Plotly;
+    if (!Plotly || typeof Plotly.relayout !== "function") return;
+    doc.querySelectorAll(".js-plotly-plot").forEach(function (plot) {
+      const layout = plot._fullLayout || plot.layout;
+      if (!layout || layout.dragmode !== "pan") return;
+      // Only touch charts that have dragmode="pan" (the seat map).
+      // Forecast charts on the landing page don't, so they're
+      // untouched.
+      Plotly.relayout(plot, { dragmode: false });
+    });
+  }
+  enableMobilePinch();
+
+  // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
   if (parentWin.__chairieCountdownInterval) {
@@ -1266,6 +1217,9 @@
     });
   }
   tick();
-  parentWin.__chairieCountdownInterval = setInterval(tick, 1000);
+  parentWin.__chairieCountdownInterval = setInterval(function () {
+    tick();
+    enableMobilePinch();   // re-apply after any Streamlit rerender
+  }, 1000);
 })();
 </script>
