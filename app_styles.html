@@ -1084,89 +1084,77 @@
   const doc       = parentWin.document;
 
   // ─────────────────────────────────────────────────────────────
-  // ENABLE PINCH-TO-ZOOM ON MOBILE
+  // ENABLE PINCH-TO-ZOOM ON MOBILE  (brute-force version)
   // ─────────────────────────────────────────────────────────────
-  // Streamlit's index.html ships with a viewport meta tag of
-  //   maximum-scale=1, user-scalable=no
-  // which disables pinch-zoom on phones. We want to override it.
+  // Streamlit's index.html ships with
+  //   width=device-width,initial-scale=1,shrink-to-fit=no,user-scalable=no
+  // i.e. zoom is disabled by default.
   //
-  // setAttribute alone often doesn't take effect on iOS Safari once
-  // the page has rendered — Safari caches the original viewport at
-  // load time. The reliable workaround is:
-  //   1. REMOVE all existing <meta name="viewport"> tags
-  //   2. CREATE a fresh one and append it to <head>
-  //   3. Use a MutationObserver to put it back if Streamlit (or any
-  //      other script) re-sets a restrictive value on rerender.
+  // Strategy:
+  //   1. REMOVE every <meta name="viewport"> and APPEND a fresh
+  //      permissive one. setAttribute alone is unreliable on
+  //      iOS Safari.
+  //   2. Re-run that check every 500ms. If Streamlit ever
+  //      rerenders <head> and brings back its restrictive tag, the
+  //      poll catches it within half a second. This replaces the
+  //      previous MutationObserver approach which silently failed
+  //      if Streamlit replaced the head node wholesale.
+  //
+  // Side-effect: <body data-chairie-viewport-fix="active"> is set
+  // on the parent document. That's a debug marker you can check
+  // in DevTools to confirm this script actually ran.
   // ─────────────────────────────────────────────────────────────
   const VIEWPORT_OK =
     "width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes";
 
-  function applyViewport(targetDoc) {
-    if (!targetDoc || !targetDoc.head) return;
+  function viewportLooksOk(content) {
+    if (!content) return false;
+    return content.indexOf("user-scalable=yes") >= 0 &&
+           content.indexOf("maximum-scale=5")  >= 0;
+  }
+
+  function fixViewport() {
+    if (!doc || !doc.head) return;
     try {
-      // Wipe any existing viewport tags (some pages have multiples).
-      targetDoc.querySelectorAll('meta[name="viewport"]').forEach(function (m) {
-        m.remove();
+      const tags = doc.querySelectorAll('meta[name="viewport"]');
+      // Only act if no permissive tag is already present. Avoids
+      // an infinite loop of remove/append on our own changes.
+      let alreadyGood = false;
+      tags.forEach(function (m) {
+        if (viewportLooksOk(m.getAttribute("content"))) alreadyGood = true;
       });
-      const meta = targetDoc.createElement("meta");
+      if (alreadyGood && tags.length === 1) return;
+
+      tags.forEach(function (m) { m.remove(); });
+
+      const meta = doc.createElement("meta");
       meta.setAttribute("name", "viewport");
       meta.setAttribute("content", VIEWPORT_OK);
-      targetDoc.head.appendChild(meta);
-    } catch (e) {
-      // Cross-origin or detached document — silently skip.
-    }
+      doc.head.appendChild(meta);
+
+      // Visible debug marker so you can confirm via DevTools that
+      // the script actually ran. Look for <body data-chairie-viewport-fix>.
+      if (doc.body) {
+        doc.body.setAttribute("data-chairie-viewport-fix", "active");
+      }
+    } catch (e) { /* swallow */ }
   }
 
-  // Apply once now, to the Streamlit app's own document.
-  applyViewport(doc);
-
-  // If the app is itself embedded in an outer iframe (some hosting
-  // setups do this), try the outermost page too. Will throw on
-  // cross-origin; the try/catch swallows that.
-  try {
-    if (parentWin.top && parentWin.top !== parentWin) {
-      applyViewport(parentWin.top.document);
-    }
-  } catch (e) { /* cross-origin, ignore */ }
-
-  // Watch for any future viewport changes (Streamlit re-renders the
-  // <head> from time to time). Re-apply only when the tag is actually
-  // restrictive — otherwise we'd loop indefinitely on our own edits.
-  if (!parentWin.__chairieViewportObserver) {
-    try {
-      const observer = new MutationObserver(function () {
-        const m = doc.querySelector('meta[name="viewport"]');
-        if (!m) {
-          applyViewport(doc);
-          return;
-        }
-        const c = m.getAttribute("content") || "";
-        if (
-          c.indexOf("user-scalable=no") >= 0 ||
-          /maximum-scale\s*=\s*1(?!\d)/.test(c)
-        ) {
-          applyViewport(doc);
-        }
-      });
-      observer.observe(doc.head, {
-        childList: true,
-        subtree:   true,
-        attributes: true,
-        attributeFilter: ["content"],
-      });
-      parentWin.__chairieViewportObserver = observer;
-    } catch (e) { /* head not ready yet, will retry on next inject */ }
+  // Apply immediately, then keep applying — half-second polling is
+  // cheap and bullet-proof against Streamlit re-renders that would
+  // otherwise revert our change.
+  fixViewport();
+  if (parentWin.__chairieViewportTimer) {
+    clearInterval(parentWin.__chairieViewportTimer);
   }
+  parentWin.__chairieViewportTimer = setInterval(fixViewport, 500);
 
   // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
-  // Kill the previous interval if we're being re-injected on a rerun.
   if (parentWin.__chairieCountdownInterval) {
     clearInterval(parentWin.__chairieCountdownInterval);
   }
-
-  // Tick once, then every second.
   function tick() {
     const els = doc.querySelectorAll(".chairie-countdown[data-target]");
     const now = Date.now();
