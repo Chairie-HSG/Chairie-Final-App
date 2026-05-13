@@ -101,32 +101,16 @@
   #MainMenu       { visibility: hidden; }
   footer          { visibility: hidden; }
 
-  /* Don't `display: none` the header — in newer Streamlit versions the
-     sidebar's expand button (the chevron that lets you re-open the
-     sidebar after you close it) lives INSIDE this header. Hiding it
-     removes the only way back to the sidebar.
-     Instead: take it out of the document flow so it occupies zero
-     vertical space, make its background transparent, and pin it on
-     top via z-index so its children (the sidebar expand button) still
-     receive clicks. */
+  /* Keep Streamlit's header at its DEFAULT size and position.
+     It gives the page a natural top inset, and (importantly) it's
+     where the sidebar's expand chevron lives. Just blend its
+     background into the page so it doesn't visually clash. */
   header[data-testid="stHeader"] {
-    position: fixed !important;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 0 !important;
-    min-height: 0 !important;
     background: transparent !important;
-    z-index: 200;
-    pointer-events: none;          /* don't block clicks underneath... */
-  }
-  header[data-testid="stHeader"] * {
-    pointer-events: auto;          /* ...but its children stay clickable */
   }
 
-  /* The "open sidebar" chevron that appears when the sidebar is
-     collapsed. Force visibility so it can't get hidden by the
-     pointer-events trick above or by Streamlit defaults. */
+  /* Defensive: force the sidebar's expand control to stay visible.
+     Different Streamlit versions use different data-testid names. */
   [data-testid="stSidebarCollapsedControl"],
   [data-testid="collapsedControl"],
   button[kind="header"][data-testid="baseButton-header"] {
@@ -137,37 +121,20 @@
     z-index: 999 !important;
   }
 
-  /* ────────────────────────────────────────────────────────────
-     KILL ALL TOP PADDING above the main content
-     Streamlit ships with ~6rem padding-top on the block container
-     (sized to clear the now-hidden header). We override both the
-     old `.main .block-container` selector AND the new
-     `[data-testid="stMainBlockContainer"]` selector so this works
-     across Streamlit versions. !important because Streamlit's own
-     styles are loaded with high specificity.
-     ────────────────────────────────────────────────────────────*/
-  /* ────────────────────────────────────────────────────────────
-     TOP-AREA SPACING
-     A small top padding on the whole app container gives both the
-     sidebar AND the main column a bit of breathing room from the
-     viewport edge. The block container adds a little more for the
-     main column specifically.
-     ────────────────────────────────────────────────────────────*/
-  [data-testid="stAppViewContainer"] { padding-top: 0.6rem !important; }
-  [data-testid="stMain"]              { padding-top: 0 !important; }
+  /* Constrain the main column on very wide screens. We leave the
+     default top padding alone — Streamlit's header already supplies
+     the visual top spacing, so adding more here just causes the
+     "cropping" look the user reported. */
   [data-testid="stMainBlockContainer"],
   .main .block-container {
     max-width:        1400px;
-    padding-top:      1rem !important;
     padding-bottom:   3rem;
   }
 
   /* The countdown JS lives in a components.v1.html iframe with
      height=0. The wrapper Streamlit puts around it can still have a
-     visible margin / min-height — squash it so it doesn't push the
-     top bar down. */
-  iframe[title="streamlit_components.v1.html.html"][height="0"],
-  iframe[title="streamlit_extras.app_logo.app_logo"][height="0"] {
+     visible margin — squash it so it doesn't add a gap. */
+  iframe[title="streamlit_components.v1.html.html"][height="0"] {
     display: none !important;
   }
   .stElementContainer:has(> iframe[height="0"]),
@@ -227,10 +194,8 @@
     border-radius: 0 10px 10px 0 !important;
     box-shadow: var(--shadow-md) !important;
     padding: 10px 8px !important;
-    /* Pushed down so it lines up with the chairie top bar's vertical
-       middle (top bar = padding-top:1rem + sticky top:0.75rem + bar
-       padding ~12px → bar center is ~32px from viewport top). */
-    top: 32px !important;
+    /* Default position — Streamlit places it for us now that the
+       header is back in its normal flow. */
     left: 0 !important;
     z-index: 999 !important;
   }
@@ -239,14 +204,6 @@
   [data-testid="stSidebarCollapseButton"] svg {
     width: 18px;
     height: 18px;
-  }
-  /* The « close button shown inside the sidebar when it's open. Lives
-     in Streamlit's sidebar header which we don't otherwise move, so
-     give it a top margin so it sits at the same height as the
-     collapsed-control would have, instead of jamming against the
-     viewport edge. */
-  [data-testid="stSidebarCollapseButton"] {
-    margin-top: 8px;
   }
 
   .chairie-sidebar-brand {
@@ -390,7 +347,10 @@
      above scrolling content; the solid background prevents bleed-through. */
   .st-key-chairie_topbar {
     position: sticky;
-    top: 0.75rem;
+    /* Pin just below Streamlit's own header. Streamlit exposes
+       --header-height in recent versions; fall back to 3.75rem
+       (~60px, the typical header height) when the var is absent. */
+    top: var(--header-height, 3.75rem);
     z-index: 100;
     background: var(--bg-card);
     border: 1px solid var(--border-soft);
