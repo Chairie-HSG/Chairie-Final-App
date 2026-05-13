@@ -15,6 +15,7 @@ Combines:
 import os
 import datetime
 from datetime import datetime as dt, timedelta, timezone
+from zoneinfo import ZoneInfo   # Python 3.9+ stdlib — no extra dep needed
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -68,7 +69,17 @@ except Exception:
 # VISUAL SHELL
 # ─────────────────────────────────────────────────────────────
 def _inject_app_shell():
-    """Load the global CSS shell (app_styles.html) into the page.
+    """Load the global CSS shell + countdown JS into the page.
+
+    app_styles.html holds two sections separated by the marker
+    `<!-- SCRIPT -->`:
+      • Everything ABOVE the marker is CSS (in a <style> block) and is
+        injected via st.markdown — Streamlit's sanitizer keeps <style>.
+      • Everything BELOW is JavaScript (in a <script> block) and is
+        injected via st.components.v1.html — Streamlit's sanitizer would
+        strip <script> from a markdown call, so we route it through a
+        zero-height component iframe instead. The script accesses the
+        parent DOM via window.parent.document to update countdowns.
 
     Called once at the top of main_app(). The login page has its own
     self-contained Google-style theme and intentionally does not load
@@ -78,10 +89,20 @@ def _inject_app_shell():
     path = os.path.join(here, "app_styles.html")
     try:
         with open(path, "r", encoding="utf-8") as f:
-            st.markdown(f.read(), unsafe_allow_html=True)
+            content = f.read()
     except FileNotFoundError:
         # Shell missing → fall back to Streamlit's default look.
-        pass
+        return
+
+    # Split on the SCRIPT marker. If absent, treat everything as CSS.
+    if "<!-- SCRIPT -->" in content:
+        css_part, js_part = content.split("<!-- SCRIPT -->", 1)
+    else:
+        css_part, js_part = content, ""
+
+    st.markdown(css_part, unsafe_allow_html=True)
+    if js_part.strip():
+        st.components.v1.html(js_part, height=0)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -138,34 +159,25 @@ if SUPABASE_URL and SUPABASE_KEY:
         SUPABASE_OK = False
 
 # ─────────────────────────────────────────────────────────────
-# TIMER HELPERS  (from Among-US-Group/timer.py)
-# ─────────────────────────────────────────────────────────────
-def has_expired(check_in_time: dt) -> bool:
-    """Returns True if 2 hours have passed since check_in_time."""
-    expiry_time = check_in_time + timedelta(hours=2)
-    current_time = dt.now()
-    return current_time > expiry_time
-
-
-def free_expired_seats(seats: list) -> None:
-    """Goes through all seats and sets occupied=False if their 2 hours are up."""
-    for seat in seats:
-        if seat["occupied"]:
-            check_in_time = dt.fromisoformat(seat["check_in_time"])
-            if has_expired(check_in_time):
-                seat["occupied"] = False
-                seat["check_in_time"] = None
-
-
-# ─────────────────────────────────────────────────────────────
 # API LAYER  (from api.py + supabase_client.py)
 # ─────────────────────────────────────────────────────────────
 RESERVATION_MINUTES = 10
 RECHECK_HOURS = 2
 
+# All wall-clock display is in Switzerland's local timezone. Storage in
+# Supabase stays in UTC (good practice for ISO timestamps); we only
+# convert when *showing* a time to the user.
+ZURICH_TZ = ZoneInfo("Europe/Zurich")
+
 
 def _now():
+    """UTC datetime used by all storage / comparison logic."""
     return dt.now(timezone.utc)
+
+
+def _zurich_now():
+    """Zurich-local datetime used only for display (KPI strip, forecast)."""
+    return dt.now(ZURICH_TZ)
 
 
 def _to_iso(d):
@@ -535,8 +547,26 @@ def seconds_left(iso_value):
 
 
 def countdown(iso_value):
+    """Static MM:SS string. Kept for places where a one-shot snapshot is
+    fine (e.g. log messages, the QR scan result on first display)."""
     secs = seconds_left(iso_value)
     return f"{secs // 60:02d}:{secs % 60:02d}"
+
+
+def live_countdown_html(iso_value):
+    """HTML <span> that the JS ticker in app_styles.html refreshes every
+    second on the client side — never freezes between Streamlit reruns.
+
+    The span carries the ISO target on a data-attribute; the JS reads
+    every `.chairie-countdown[data-target]` and updates its text.
+    The initial text content avoids a "--:--" flash before JS kicks in.
+    """
+    if not iso_value:
+        return '<span class="chairie-countdown">--:--</span>'
+    return (
+        f'<span class="chairie-countdown" data-target="{iso_value}">'
+        f'{countdown(iso_value)}</span>'
+    )
 
 
 def seat_status_color(status):
@@ -855,9 +885,12 @@ def _render_seat_detail_panel(seats, token):
 
     elif seat["status"] == "reserved":
         if seat["reserved_by_me"]:
-            st.warning(
-                f"This seat is reserved by you. "
-                f"Time left to check in: {countdown(seat['reserved_until'])}"
+            st.markdown(
+                f'<div class="chairie-alert chairie-alert-warning">'
+                f'This seat is reserved by you. Time left to check in: '
+                f'{live_countdown_html(seat["reserved_until"])}'
+                f'</div>',
+                unsafe_allow_html=True,
             )
             c1, c2 = st.columns(2)
             with c1:
@@ -886,9 +919,13 @@ def _render_seat_detail_panel(seats, token):
 
     elif seat["status"] == "occupied":
         if seat["occupied_by_me"]:
-            st.success(
-                f"You are currently occupying this seat. "
-                f"Re-check countdown: {countdown(seat['occupied_until'])}"
+            st.markdown(
+                f'<div class="chairie-alert chairie-alert-success">'
+                f'You are currently occupying this seat. Re-check '
+                f'countdown: '
+                f'{live_countdown_html(seat["occupied_until"])}'
+                f'</div>',
+                unsafe_allow_html=True,
             )
             if st.button("Release Seat", key=f"release_{seat['id']}"):
                 result = release_current_seat(token)
@@ -1188,8 +1225,9 @@ def _render_forecast_chart(floor_choice, floor_stats):
     occupancy  = [pct for _, pct in series]
 
     # Find "now" — clamp to the chart range so we always highlight
-    # one bar even outside operating hours.
-    now_hour = dt.now().hour
+    # one bar even outside operating hours. Zurich-local hour, since
+    # this is for display in a Swiss library.
+    now_hour = _zurich_now().hour
     if now_hour < hours[0]:
         now_hour = hours[0]
     elif now_hour > hours[-1]:
@@ -1515,7 +1553,7 @@ def landing_page(token):
     # ── KPI strip ───────────────────────────────────────────────────────
     total_free = sum(1 for s in seats if s.get("status") == "free")
     floors_n   = len(FLOOR_META)
-    now_str    = dt.now().strftime("%H:%M")
+    now_str    = _zurich_now().strftime("%H:%M")
 
     st.markdown(
         '<div class="chairie-section-title">At a glance</div>',
@@ -1661,16 +1699,26 @@ def map_page(token):
         checked_in_seat = status_result.get("checked_in_seat")
 
         if reserved_seat:
-            st.warning(
-                f"You reserved seat **{reserved_seat['code']}**. "
-                f"Scan the QR code within {RESERVATION_MINUTES} min. "
-                f"⏱ {countdown(reserved_seat['reserved_until'])} remaining"
+            # Live countdown — JS ticker in app_styles.html updates the
+            # <span class="chairie-countdown"> every second, no rerun needed.
+            st.markdown(
+                f'<div class="chairie-alert chairie-alert-warning">'
+                f'You reserved seat <strong>{reserved_seat["code"]}</strong>. '
+                f'Scan the QR code within {RESERVATION_MINUTES} min. ⏱ '
+                f'{live_countdown_html(reserved_seat["reserved_until"])} '
+                f'remaining'
+                f'</div>',
+                unsafe_allow_html=True,
             )
         if checked_in_seat:
-            st.success(
-                f"Checked in at seat **{checked_in_seat['code']}**. "
-                f"Re-check in after {RECHECK_HOURS} hour(s). "
-                f"⏱ {countdown(checked_in_seat['occupied_until'])} left"
+            st.markdown(
+                f'<div class="chairie-alert chairie-alert-success">'
+                f'Checked in at seat <strong>{checked_in_seat["code"]}</strong>. '
+                f'Re-check in after {RECHECK_HOURS} hour(s). ⏱ '
+                f'{live_countdown_html(checked_in_seat["occupied_until"])} '
+                f'left'
+                f'</div>',
+                unsafe_allow_html=True,
             )
 
     # ── Fetch seats from Supabase ────────────────────────────────────────
@@ -1937,9 +1985,12 @@ PAGE_ROUTES = {
 def main_app():
     require_login()
 
-    # Auto-refresh every 30s so live countdowns + seat statuses stay
-    # fresh on every page (not just the map).
-    st_autorefresh(interval=30000, key="seat_refresh")
+    # Auto-refresh every 60 seconds — only purpose now is to pick up
+    # seat-status changes that happen on the server (someone else
+    # reserved/released a seat). Countdowns no longer rely on this
+    # refresh: they're driven by a 1-second JS interval in the parent
+    # DOM, so the user doesn't see the page "freeze" on every tick.
+    st_autorefresh(interval=60000, key="seat_refresh")
 
     # Inject the global CSS shell once per page render.
     _inject_app_shell()
