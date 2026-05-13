@@ -132,6 +132,108 @@
     touch-action: pinch-zoom !important;
   }
 
+  /* ────────────────────────────────────────────────────────────
+     MOBILE MAP ZOOM CONTROLS
+     Two-finger pinch is unreliable across Streamlit + Plotly + the
+     few mobile browsers we can't fully test, so we ship our own
+     +/− buttons on mobile. Floating bottom-right of the viewport,
+     visible ONLY on the map page (the JS in the <script> block at
+     the bottom of this file injects/hides them based on the
+     #chairie-map-page-marker added by streamlit_app.map_page).
+
+     The buttons set a CSS variable --map-zoom on <html>; the rule
+     below picks it up and rescales the Plotly chart. `zoom:` (not
+     `transform: scale`) is used on purpose: in Chromium browsers
+     `zoom` also adjusts click coordinates, so tapping a seat after
+     zooming still selects the right one — `transform: scale` would
+     break click targeting.
+     ────────────────────────────────────────────────────────────*/
+
+  /* Default: controls are hidden everywhere. The media query below
+     turns them on for mobile, and the JS toggles per-page. */
+  .chairie-zoom-controls {
+    display: none;
+  }
+
+  @media (max-width: 768px) {
+    /* Show controls (the JS still hides them on non-map pages). */
+    .chairie-zoom-controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      position: fixed;
+      right: 14px;
+      bottom: 90px;       /* clear of the support footer if scrolled to bottom */
+      z-index: 1000;
+      background: var(--bg-card);
+      border: 1px solid var(--border-soft);
+      border-radius: 14px;
+      box-shadow: var(--shadow-md);
+      padding: 8px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .chairie-zoom-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 10px;
+      background: var(--chairie-green);
+      color: #ffffff;
+      border: none;
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: manipulation;       /* fast tap, no double-tap zoom delay */
+      transition: transform 0.08s ease, background 0.12s ease;
+      box-shadow: var(--shadow-xs);
+    }
+    .chairie-zoom-btn:active {
+      transform: scale(0.92);
+      background: var(--chairie-green-hover);
+    }
+    /* Disabled state when at min/max zoom */
+    .chairie-zoom-btn[aria-disabled="true"] {
+      background: var(--bg-subtle);
+      color: var(--text-tertiary);
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+    /* The reset button (honey) reads as a secondary action */
+    .chairie-zoom-btn.chairie-zoom-reset {
+      background: var(--chairie-honey);
+      color: #5c4100;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    .chairie-zoom-btn.chairie-zoom-reset:active {
+      background: var(--chairie-honey-hover);
+    }
+
+    .chairie-zoom-level {
+      font-variant-numeric: tabular-nums;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      padding: 2px 0;
+      min-width: 48px;
+      text-align: center;
+      letter-spacing: 0.02em;
+    }
+
+    /* Scale the seat map (and any other Plotly chart on this page).
+       Forecast charts on the landing page are not affected because
+       the JS only sets --map-zoom on the map page. */
+    [data-testid="stPlotlyChart"] {
+      zoom: var(--map-zoom, 1);
+    }
+  }
+
   /* Keep Streamlit's header at its DEFAULT size and position.
      It gives the page a natural top inset, and (importantly) it's
      where the sidebar's expand chevron lives. Just blend its
@@ -1165,6 +1267,85 @@
   parentWin.__chairieViewportTimer = setInterval(fixViewport, 500);
 
   // ─────────────────────────────────────────────────────────────
+  // MOBILE MAP ZOOM (+/-)  controls
+  // ─────────────────────────────────────────────────────────────
+  // Native pinch-zoom is unreliable across Streamlit + Plotly + the
+  // mobile browsers we can't fully test, so we ship our own simple
+  // +/− buttons. They appear ONLY on:
+  //   • mobile width (<= 768px)
+  //   • the map page  (detected via the hidden #chairie-map-page-marker
+  //     emitted from streamlit_app.map_page)
+  //
+  // Clicking + or − updates the --map-zoom CSS variable on <html>;
+  // the CSS in this file picks that up and rescales the Plotly chart
+  // via `zoom:`. Plotly's own one-finger pan continues to work after
+  // zooming, so users can drag around the enlarged map naturally.
+  //
+  // The function is idempotent: created once, then just toggled on
+  // visibility from the polling interval below.
+
+  const ZOOM = { current: 1.0, MIN: 0.5, MAX: 3.0, STEP: 0.25 };
+
+  function buildZoomControls() {
+    const controls = doc.createElement("div");
+    controls.className = "chairie-zoom-controls";
+    controls.innerHTML =
+      '<button class="chairie-zoom-btn"  data-action="in"    aria-label="Zoom in">+</button>' +
+      '<div    class="chairie-zoom-level">100%</div>' +
+      '<button class="chairie-zoom-btn"  data-action="out"   aria-label="Zoom out">−</button>' +
+      '<button class="chairie-zoom-btn chairie-zoom-reset" ' +
+              'data-action="reset" aria-label="Reset zoom">100%</button>';
+
+    function applyZoom() {
+      doc.documentElement.style.setProperty("--map-zoom", String(ZOOM.current));
+      const lbl = controls.querySelector(".chairie-zoom-level");
+      if (lbl) lbl.textContent = Math.round(ZOOM.current * 100) + "%";
+      // Disable +/- buttons at the limits so the user gets feedback.
+      const inBtn  = controls.querySelector('[data-action="in"]');
+      const outBtn = controls.querySelector('[data-action="out"]');
+      if (inBtn)  inBtn .setAttribute("aria-disabled", ZOOM.current >= ZOOM.MAX);
+      if (outBtn) outBtn.setAttribute("aria-disabled", ZOOM.current <= ZOOM.MIN);
+    }
+
+    controls.addEventListener("click", function (e) {
+      const btn = e.target.closest(".chairie-zoom-btn");
+      if (!btn || btn.getAttribute("aria-disabled") === "true") return;
+      const action = btn.dataset.action;
+      if (action === "in")    ZOOM.current = Math.min(ZOOM.MAX, ZOOM.current + ZOOM.STEP);
+      if (action === "out")   ZOOM.current = Math.max(ZOOM.MIN, ZOOM.current - ZOOM.STEP);
+      if (action === "reset") ZOOM.current = 1.0;
+      applyZoom();
+    });
+
+    applyZoom();
+    return controls;
+  }
+
+  function syncZoomControls() {
+    const isMobile  = window.innerWidth <= 768;
+    const isMapPage = !!doc.getElementById("chairie-map-page-marker");
+    let controls    = doc.querySelector(".chairie-zoom-controls");
+
+    if (!isMobile || !isMapPage) {
+      // Off the map page: hide controls and reset zoom so the
+      // user doesn't return later with a stale scaled view.
+      if (controls) controls.remove();
+      doc.documentElement.style.setProperty("--map-zoom", "1");
+      ZOOM.current = 1.0;
+      return;
+    }
+
+    // On the map page on mobile — ensure controls exist.
+    if (!controls && doc.body) {
+      doc.body.appendChild(buildZoomControls());
+    }
+  }
+
+  // Run once now, then on the same polling interval as the viewport
+  // fix below so we catch Streamlit page transitions.
+  syncZoomControls();
+
+  // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
   if (parentWin.__chairieCountdownInterval) {
@@ -1183,6 +1364,9 @@
     });
   }
   tick();
-  parentWin.__chairieCountdownInterval = setInterval(tick, 1000);
+  parentWin.__chairieCountdownInterval = setInterval(function () {
+    tick();
+    syncZoomControls();
+  }, 1000);
 })();
 </script>
