@@ -103,15 +103,14 @@
 
   /* ────────────────────────────────────────────────────────────
      MOBILE TOUCH BEHAVIOUR
-     Let the page itself respond normally to touches (scrolling,
-     etc). DO NOT override touch-action inside Plotly charts:
-     Plotly ships with `touch-action: none` on its drag layer so
-     its own JS can read touch events and convert two-finger
-     gestures into a chart zoom (with `scrollZoom: true`). Any
-     `!important touch-action: pinch-zoom` rule here would steal
-     pinches from Plotly and hand them to the browser, where
-     Streamlit's `user-scalable=no` viewport then refuses to zoom
-     — killing the gesture entirely.
+     Let scrollable regions (page body, sidebar, etc) behave
+     normally. Plotly charts manage their own touch handling
+     internally — its drag layer (`.nsewdrag`) ships with
+     `touch-action: none` so Plotly's JS can read raw touch
+     events. We must NOT override that with `touch-action:
+     pinch-zoom` or similar, or the browser steals the gesture
+     before our JS pinch handler (added in the <script> block
+     below) can see it.
      ────────────────────────────────────────────────────────────*/
   html,
   body,
@@ -1088,31 +1087,236 @@
   const doc       = parentWin.document;
 
   // ─────────────────────────────────────────────────────────────
-  // MOBILE PINCH-ZOOM ON THE SEAT MAP
+  // MOBILE PINCH-ZOOM ON PLOTLY CHARTS
   // ─────────────────────────────────────────────────────────────
-  // No JS is required. Plotly's own touch handler already gives us:
-  //   • 1 finger drag  → pan (with dragmode: "pan")
-  //   • 2 finger pinch → zoom (with config.scrollZoom: true)
-  //   • 1 finger tap   → click event (selects a seat)
+  // Plotly.js does NOT implement pinch-zoom for 2D cartesian
+  // charts (its `scrollZoom` config only covers the mouse wheel
+  // on these chart types — pinch is built in only for mapbox /
+  // geo / gl3d). So we install our own handler:
   //
-  // For this to work, two things must NOT happen:
-  //   1. The CSS in this file must not override Plotly's
-  //      `touch-action: none` on the chart. We used to do that
-  //      with a `pinch-zoom !important` rule, which handed the
-  //      pinch to the browser — and Streamlit's default
-  //      `user-scalable=no` viewport then refused to zoom, so
-  //      the gesture died. That rule has been removed.
-  //   2. No script may `stopPropagation` two-finger touchstart
-  //      events on Plotly charts. We used to try to do that to
-  //      force a native page-level zoom. Same outcome — Plotly
-  //      never saw the pinch and the browser didn't zoom either.
+  //   1. Listen for `touchstart` on the parent document in the
+  //      CAPTURE phase, before Plotly's own listeners run.
+  //   2. When two fingers land on a `.js-plotly-plot`, freeze
+  //      Plotly's pan (via stopPropagation) and record:
+  //         - the initial finger distance
+  //         - the pinch midpoint in chart-data coordinates
+  //   3. On `touchmove`, compute scale = initDist / newDist and
+  //      build new x/y axis ranges scaled around the midpoint.
+  //   4. Schedule a Plotly.relayout via requestAnimationFrame so
+  //      we never do more than one redraw per frame.
+  //   5. On `touchend` (back to fewer than 2 touches), drop state.
   //
-  // With both of those gone, Plotly's `scrollZoom: true` config
-  // (set in interactive_map.py) does the right thing on its own.
+  // Desktop is untouched: this only installs when innerWidth ≤ 768.
+  // One-finger drag and seat-tap still flow to Plotly normally
+  // because we only block events when two fingers are down.
   //
-  // Desktop is unaffected (click+drag pans, mouse wheel zooms —
-  // both use mouse events, not touch).
-  //
+  // Debug: <body data-chairie-pinch="..."> on the parent doc:
+  //   "installed" → handler attached
+  //   "active"    → mid-pinch
+  //   "idle"      → pinch ended
+  //   "no-plotly" → couldn't reach Plotly.relayout (see fallback note)
+  // ─────────────────────────────────────────────────────────────
+  function installMobilePinchZoom() {
+    if (parentWin.innerWidth > 768) return;
+    if (parentWin.__chairiePinchInstalled) return;
+    parentWin.__chairiePinchInstalled = true;
+
+    let pinchState   = null;   // null when not pinching
+    let pendingRAF   = null;
+    let pendingRange = null;
+
+    function distance(t0, t1) {
+      return Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+    }
+
+    // The drag layer is the invisible <rect class="nsewdrag"> Plotly
+    // uses as the click/pan target. It's the most reliable proxy for
+    // "the plot area's bounding box on screen".
+    function getDragLayer(chartDiv) {
+      return chartDiv.querySelector(".nsewdrag")
+          || chartDiv.querySelector(".draglayer")
+          || chartDiv;
+    }
+
+    // Resolve the Plotly module. react-plotly.js (which Streamlit
+    // uses under the hood) doesn't always expose it on window, so we
+    // probe a few places. If none works, the pinch handler falls
+    // back to dispatching synthetic wheel events (see dispatchWheel).
+    function getPlotly() {
+      if (parentWin.Plotly && parentWin.Plotly.relayout) return parentWin.Plotly;
+      if (parentWin.plotly && parentWin.plotly.relayout) return parentWin.plotly;
+      return null;
+    }
+
+    // Fallback when we can't get a handle on Plotly.relayout directly.
+    // Plotly registers a `wheel` listener on its drag layer when
+    // scrollZoom is true; we feed it synthetic wheel events at the
+    // pinch midpoint to drive the zoom. Less precise than relayout
+    // (Plotly picks the zoom factor, not us) but works anywhere.
+    function dispatchWheel(dragLayer, deltaY, clientX, clientY) {
+      try {
+        const evt = new WheelEvent("wheel", {
+          bubbles: true, cancelable: true,
+          deltaY: deltaY, deltaMode: 0,
+          clientX: clientX, clientY: clientY,
+          ctrlKey: false,
+        });
+        dragLayer.dispatchEvent(evt);
+      } catch (_) { /* old browsers */ }
+    }
+
+    function onTouchStart(e) {
+      if (e.touches.length !== 2) return;
+      const target = e.target;
+      if (!target || !target.closest) return;
+      const chartDiv = target.closest(".js-plotly-plot");
+      if (!chartDiv) return;
+      // _fullLayout is Plotly's computed layout; we need it to know
+      // current axis ranges. If the chart hasn't finished its first
+      // render yet, bail out — the user can pinch again.
+      if (!chartDiv._fullLayout || !chartDiv._fullLayout.xaxis || !chartDiv._fullLayout.yaxis) return;
+
+      // Block Plotly from receiving the 2nd finger. With Plotly out
+      // of the picture, the browser would normally try to scroll —
+      // preventDefault stops that too.
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+
+      const fl     = chartDiv._fullLayout;
+      const initX  = fl.xaxis.range.slice();
+      const initY  = fl.yaxis.range.slice();
+      const drag   = getDragLayer(chartDiv);
+      const rect   = drag.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      // Fractional position of the pinch center within the plot area
+      // (0,0 = top-left, 1,1 = bottom-right).
+      const fx = Math.max(0, Math.min(1, (midX - rect.left) / rect.width));
+      const fy = Math.max(0, Math.min(1, (midY - rect.top)  / rect.height));
+
+      // Convert that to data coordinates using Plotly's axis
+      // conventions:
+      //   x: range[0] at the LEFT, range[1] at the RIGHT
+      //   y: range[0] at the BOTTOM, range[1] at the TOP (so even
+      //      when y is inverted — e.g. [848, 0] for our top-down
+      //      floor plan — the math still works out).
+      const dataX = initX[0] + fx * (initX[1] - initX[0]);
+      const dataY = initY[1] + fy * (initY[0] - initY[1]);
+
+      pinchState = {
+        chartDiv:  chartDiv,
+        dragLayer: drag,
+        initDist:  distance(e.touches[0], e.touches[1]),
+        initX:     initX,
+        initY:     initY,
+        fx:        fx,
+        fy:        fy,
+        dataX:     dataX,
+        dataY:     dataY,
+        lastMidX:  midX,
+        lastMidY:  midY,
+        lastDist:  distance(e.touches[0], e.touches[1]),
+      };
+
+      if (doc.body) doc.body.setAttribute("data-chairie-pinch", "active");
+    }
+
+    function commitRelayout() {
+      pendingRAF = null;
+      if (!pendingRange || !pinchState) return;
+      const Plotly = getPlotly();
+      if (Plotly) {
+        try {
+          Plotly.relayout(pinchState.chartDiv, pendingRange);
+        } catch (_) { /* swallow; the next frame will retry */ }
+      } else if (doc.body) {
+        // Mark so the user knows why pinch is silent.
+        doc.body.setAttribute("data-chairie-pinch", "no-plotly");
+      }
+      pendingRange = null;
+    }
+
+    function onTouchMove(e) {
+      if (!pinchState) return;
+      if (e.touches.length !== 2) return;
+      e.stopPropagation();
+      if (e.cancelable) e.preventDefault();
+
+      const newDist = distance(e.touches[0], e.touches[1]);
+      if (newDist < 10) return;   // ignore degenerate near-zero pinches
+
+      // Bigger gap than at start = zoom in = smaller axis range.
+      const rawScale = pinchState.initDist / newDist;
+      const scale    = Math.max(0.05, Math.min(20, rawScale));
+
+      const spanX = (pinchState.initX[1] - pinchState.initX[0]) * scale;
+      const spanY = (pinchState.initY[0] - pinchState.initY[1]) * scale;
+
+      // Solve for ranges that keep dataX/dataY pinned at (fx,fy) on screen.
+      const newX0 = pinchState.dataX - pinchState.fx * spanX;
+      const newX1 = newX0 + spanX;
+      const newY1 = pinchState.dataY - pinchState.fy * spanY;
+      const newY0 = newY1 + spanY;
+
+      pendingRange = {
+        "xaxis.range": [newX0, newX1],
+        "yaxis.range": [newY0, newY1],
+      };
+      // rAF-throttle — Plotly.relayout on every touchmove is too
+      // expensive on mid-range Android phones and causes the chart
+      // to lag behind the fingers.
+      if (!pendingRAF) {
+        pendingRAF = parentWin.requestAnimationFrame(commitRelayout);
+      }
+
+      // Wheel-event fallback path: if Plotly isn't reachable via the
+      // module API, we still try to drive the zoom by synthesising
+      // wheel events on the drag layer. Harmless if relayout already
+      // worked because Plotly de-dupes; if both paths fired it would
+      // double-zoom, so we ONLY dispatch when relayout failed last frame.
+      if (doc.body && doc.body.getAttribute("data-chairie-pinch") === "no-plotly") {
+        const distDelta = newDist - pinchState.lastDist;
+        if (Math.abs(distDelta) > 0.5) {
+          dispatchWheel(
+            pinchState.dragLayer,
+            -distDelta * 4,
+            (e.touches[0].clientX + e.touches[1].clientX) / 2,
+            (e.touches[0].clientY + e.touches[1].clientY) / 2
+          );
+        }
+      }
+      pinchState.lastDist = newDist;
+    }
+
+    function onTouchEnd(e) {
+      if (!pinchState) return;
+      if (e.touches.length < 2) {
+        pinchState = null;
+        if (pendingRAF) {
+          parentWin.cancelAnimationFrame(pendingRAF);
+          pendingRAF = null;
+        }
+        pendingRange = null;
+        if (doc.body) doc.body.setAttribute("data-chairie-pinch", "idle");
+      }
+    }
+
+    // Capture-phase listeners on the parent doc fire BEFORE Plotly's
+    // own bubble-phase listeners on the chart, which is what lets us
+    // stopPropagation effectively. passive:false is required so
+    // preventDefault works on touchstart/touchmove.
+    doc.addEventListener("touchstart",  onTouchStart, { capture: true, passive: false });
+    doc.addEventListener("touchmove",   onTouchMove,  { capture: true, passive: false });
+    doc.addEventListener("touchend",    onTouchEnd,   { capture: true });
+    doc.addEventListener("touchcancel", onTouchEnd,   { capture: true });
+
+    if (doc.body) doc.body.setAttribute("data-chairie-pinch", "installed");
+  }
+
+  installMobilePinchZoom();
+
   // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
