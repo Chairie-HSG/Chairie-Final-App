@@ -100,12 +100,41 @@
   /* Hide Streamlit's default chrome */
   #MainMenu       { visibility: hidden; }
   footer          { visibility: hidden; }
-  /* Hide Streamlit's top header completely so our own sticky top bar
-     can pin to the very top of the viewport (was just transparent
-     before, which left a ~50px void above our bar). */
+
+  /* Don't `display: none` the header — in newer Streamlit versions the
+     sidebar's expand button (the chevron that lets you re-open the
+     sidebar after you close it) lives INSIDE this header. Hiding it
+     removes the only way back to the sidebar.
+     Instead: take it out of the document flow so it occupies zero
+     vertical space, make its background transparent, and pin it on
+     top via z-index so its children (the sidebar expand button) still
+     receive clicks. */
   header[data-testid="stHeader"] {
-    display: none !important;
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    right: 0;
     height: 0 !important;
+    min-height: 0 !important;
+    background: transparent !important;
+    z-index: 200;
+    pointer-events: none;          /* don't block clicks underneath... */
+  }
+  header[data-testid="stHeader"] * {
+    pointer-events: auto;          /* ...but its children stay clickable */
+  }
+
+  /* The "open sidebar" chevron that appears when the sidebar is
+     collapsed. Force visibility so it can't get hidden by the
+     pointer-events trick above or by Streamlit defaults. */
+  [data-testid="stSidebarCollapsedControl"],
+  [data-testid="collapsedControl"],
+  button[kind="header"][data-testid="baseButton-header"] {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    z-index: 999 !important;
   }
 
   /* ────────────────────────────────────────────────────────────
