@@ -146,12 +146,19 @@
      across Streamlit versions. !important because Streamlit's own
      styles are loaded with high specificity.
      ────────────────────────────────────────────────────────────*/
-  [data-testid="stAppViewContainer"] { padding-top: 0 !important; }
+  /* ────────────────────────────────────────────────────────────
+     TOP-AREA SPACING
+     A small top padding on the whole app container gives both the
+     sidebar AND the main column a bit of breathing room from the
+     viewport edge. The block container adds a little more for the
+     main column specifically.
+     ────────────────────────────────────────────────────────────*/
+  [data-testid="stAppViewContainer"] { padding-top: 0.6rem !important; }
   [data-testid="stMain"]              { padding-top: 0 !important; }
   [data-testid="stMainBlockContainer"],
   .main .block-container {
     max-width:        1400px;
-    padding-top:      0.4rem !important;
+    padding-top:      1rem !important;
     padding-bottom:   3rem;
   }
 
@@ -220,7 +227,10 @@
     border-radius: 0 10px 10px 0 !important;
     box-shadow: var(--shadow-md) !important;
     padding: 10px 8px !important;
-    top: 18px !important;
+    /* Pushed down so it lines up with the chairie top bar's vertical
+       middle (top bar = padding-top:1rem + sticky top:0.75rem + bar
+       padding ~12px → bar center is ~32px from viewport top). */
+    top: 32px !important;
     left: 0 !important;
     z-index: 999 !important;
   }
@@ -229,6 +239,14 @@
   [data-testid="stSidebarCollapseButton"] svg {
     width: 18px;
     height: 18px;
+  }
+  /* The « close button shown inside the sidebar when it's open. Lives
+     in Streamlit's sidebar header which we don't otherwise move, so
+     give it a top margin so it sits at the same height as the
+     collapsed-control would have, instead of jamming against the
+     viewport edge. */
+  [data-testid="stSidebarCollapseButton"] {
+    margin-top: 8px;
   }
 
   .chairie-sidebar-brand {
@@ -366,12 +384,13 @@
      which Streamlit wraps in a div with class "st-key-chairie_topbar".
      This lets us style the bar like a card AND scope button overrides
      so they only affect the email pill + logout button.
-     STICKY: position: sticky + top: 0 pins the bar at the top of the
-     viewport as the user scrolls. z-index keeps it above scrolling
-     content; the solid background prevents bleed-through. */
+     STICKY: position: sticky + top: 0.5rem pins the bar near the top
+     of the viewport (with a small gap so it isn't visually cropped
+     against the viewport edge) as the user scrolls. z-index keeps it
+     above scrolling content; the solid background prevents bleed-through. */
   .st-key-chairie_topbar {
     position: sticky;
-    top: 0;
+    top: 0.75rem;
     z-index: 100;
     background: var(--bg-card);
     border: 1px solid var(--border-soft);
