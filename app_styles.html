@@ -1083,23 +1083,84 @@
   const parentWin = window.parent;
   const doc       = parentWin.document;
 
-  // ── Enable pinch-to-zoom on mobile ──────────────────────────────
-  // Streamlit ships a viewport meta tag that often includes
-  // `maximum-scale=1` or `user-scalable=no`, both of which disable
-  // pinch-to-zoom on phones. Rewrite (or create) the tag so two-finger
-  // zoom works. Runs once per page injection — cheap and idempotent.
-  let meta = doc.querySelector('meta[name="viewport"]');
-  if (!meta) {
-    meta = doc.createElement("meta");
-    meta.name = "viewport";
-    doc.head.appendChild(meta);
-  }
-  meta.setAttribute(
-    "content",
-    "width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes"
-  );
+  // ─────────────────────────────────────────────────────────────
+  // ENABLE PINCH-TO-ZOOM ON MOBILE
+  // ─────────────────────────────────────────────────────────────
+  // Streamlit's index.html ships with a viewport meta tag of
+  //   maximum-scale=1, user-scalable=no
+  // which disables pinch-zoom on phones. We want to override it.
+  //
+  // setAttribute alone often doesn't take effect on iOS Safari once
+  // the page has rendered — Safari caches the original viewport at
+  // load time. The reliable workaround is:
+  //   1. REMOVE all existing <meta name="viewport"> tags
+  //   2. CREATE a fresh one and append it to <head>
+  //   3. Use a MutationObserver to put it back if Streamlit (or any
+  //      other script) re-sets a restrictive value on rerender.
+  // ─────────────────────────────────────────────────────────────
+  const VIEWPORT_OK =
+    "width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes";
 
-  // ── Live countdown ticker ──────────────────────────────────────
+  function applyViewport(targetDoc) {
+    if (!targetDoc || !targetDoc.head) return;
+    try {
+      // Wipe any existing viewport tags (some pages have multiples).
+      targetDoc.querySelectorAll('meta[name="viewport"]').forEach(function (m) {
+        m.remove();
+      });
+      const meta = targetDoc.createElement("meta");
+      meta.setAttribute("name", "viewport");
+      meta.setAttribute("content", VIEWPORT_OK);
+      targetDoc.head.appendChild(meta);
+    } catch (e) {
+      // Cross-origin or detached document — silently skip.
+    }
+  }
+
+  // Apply once now, to the Streamlit app's own document.
+  applyViewport(doc);
+
+  // If the app is itself embedded in an outer iframe (some hosting
+  // setups do this), try the outermost page too. Will throw on
+  // cross-origin; the try/catch swallows that.
+  try {
+    if (parentWin.top && parentWin.top !== parentWin) {
+      applyViewport(parentWin.top.document);
+    }
+  } catch (e) { /* cross-origin, ignore */ }
+
+  // Watch for any future viewport changes (Streamlit re-renders the
+  // <head> from time to time). Re-apply only when the tag is actually
+  // restrictive — otherwise we'd loop indefinitely on our own edits.
+  if (!parentWin.__chairieViewportObserver) {
+    try {
+      const observer = new MutationObserver(function () {
+        const m = doc.querySelector('meta[name="viewport"]');
+        if (!m) {
+          applyViewport(doc);
+          return;
+        }
+        const c = m.getAttribute("content") || "";
+        if (
+          c.indexOf("user-scalable=no") >= 0 ||
+          /maximum-scale\s*=\s*1(?!\d)/.test(c)
+        ) {
+          applyViewport(doc);
+        }
+      });
+      observer.observe(doc.head, {
+        childList: true,
+        subtree:   true,
+        attributes: true,
+        attributeFilter: ["content"],
+      });
+      parentWin.__chairieViewportObserver = observer;
+    } catch (e) { /* head not ready yet, will retry on next inject */ }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // LIVE COUNTDOWN TICKER
+  // ─────────────────────────────────────────────────────────────
   // Kill the previous interval if we're being re-injected on a rerun.
   if (parentWin.__chairieCountdownInterval) {
     clearInterval(parentWin.__chairieCountdownInterval);
