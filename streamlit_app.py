@@ -1766,114 +1766,30 @@ def map_page(token):
 
     if layout and layout.get("seats"):
         # ── INTERACTIVE MAP PATH ────────────────────────────────────────────
-        # Merge layout coordinates with live Supabase status.
-        #
-        # The layout JSON uses sequential integer IDs starting at 1 per
-        # floor file, but Supabase auto-increment may give the same seats
-        # entirely different IDs (e.g. 505+) and the layout JSON has no
-        # `code` field, so neither id-matching nor code-matching can
-        # bridge the two sides.
-        #
-        # FIX (simplest, no data migration required): match by POSITION.
-        # Layout seats sorted by id and Supabase seats (filtered to this
-        # floor) sorted by id describe the same physical seat sequence
-        # (A1 is layout position 1, A2 is position 2, ...). Zipping them
-        # in order gives the correct status for each dot. This will keep
-        # working even if Supabase is re-seeded with brand new IDs again.
-        floor_supabase_sorted = sorted(
-            floor_seats,
-            key=lambda s: int(s.get("id") or 0),
-        )
-        layout_sorted = sorted(
-            layout["seats"],
-            key=lambda ls: (
-                int(ls["id"])
-                if str(ls.get("id", "")).lstrip("-").isdigit()
-                else 0
-            ),
-        )
+        # Merge layout coordinates with live Supabase status by seat id.
+        # After renumbering Supabase so its `id` values match the layout's
+        # (Ground 1..189, Floor 1 190..496), this straight id lookup is
+        # all that's needed. We index against ALL Supabase rows (not just
+        # this floor's): each floor's JSON uses a non-overlapping id
+        # range, so a Supabase row can only match the floor it actually
+        # belongs to.
+        supabase_by_id = {int(s["id"]): s for s in seats}
 
         merged_seats = []
-        matched      = 0
-        for i, layout_seat in enumerate(layout_sorted):
+        for layout_seat in layout["seats"]:
             try:
-                layout_id = int(layout_seat["id"])
+                sid = int(layout_seat["id"])
             except (KeyError, TypeError, ValueError):
                 continue
-
-            live = floor_supabase_sorted[i] if i < len(floor_supabase_sorted) else None
-            if live:
-                matched += 1
-
-            # Use the SUPABASE id (when paired) as the dot's click id so
-            # the detail panel can look up the right row via
-            # `s["id"] == selected_id`. Fall back to layout id otherwise.
-            try:
-                click_id = int(live["id"]) if live else layout_id
-            except (TypeError, ValueError):
-                click_id = layout_id
-
+            live = supabase_by_id.get(sid)
             merged_seats.append({
-                "id":     click_id,
+                "id":     sid,
                 "x":      int(layout_seat.get("x", 0)),
                 "y":      int(layout_seat.get("y", 0)),
                 "size":   int(layout_seat.get("size", 13)),
+                # Live status if Supabase knows this seat, else gray "maintenance".
                 "status": (live or {}).get("status", "maintenance"),
             })
-
-        # ── Diagnostic expander  (auto-opens if the merge is broken) ─────
-        total_layout = len(layout_sorted)
-        unmatched    = total_layout - matched
-        _broken      = matched == 0 and total_layout > 0
-        with st.expander(
-            f"🔧 Map merge — {matched}/{total_layout} layout seats paired "
-            f"with Supabase (position-based)",
-            expanded=_broken,
-        ):
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            mc1.metric("Supabase total",         len(seats))
-            mc2.metric("Supabase on this floor", len(floor_seats))
-            mc3.metric("Layout seats",           total_layout)
-            mc4.metric("Paired",                 matched)
-
-            if _broken:
-                st.warning(
-                    "**No seats paired on this floor.** Position-based "
-                    "matching needs at least one Supabase row whose "
-                    "`floor` column matches the current view. Verify "
-                    "that the Supabase `floor` values map to "
-                    "`FLOOR_META` (currently expects `Ground Floor` / "
-                    "`Floor 1` / `1` / `2` / etc.)."
-                )
-            elif unmatched > 0:
-                st.info(
-                    f"{unmatched} layout seat(s) on this floor have no "
-                    f"Supabase pair — they'll render as gray "
-                    f"'maintenance'. Usually means the layout has more "
-                    f"seats than Supabase does for this floor."
-                )
-
-            if floor_supabase_sorted:
-                st.markdown(
-                    "**Supabase on this floor, sorted by id** (first 5):"
-                )
-                st.table([
-                    {
-                        "id":     s.get("id"),
-                        "code":   s.get("code"),
-                        "floor":  s.get("floor"),
-                        "status": s.get("status"),
-                    }
-                    for s in floor_supabase_sorted[:5]
-                ])
-
-            if layout_sorted:
-                st.markdown("**Layout JSON, sorted by id** (first 5):")
-                st.table([
-                    {k: v for k, v in ls.items()
-                     if k in ("id", "code", "label", "name", "x", "y")}
-                    for ls in layout_sorted[:5]
-                ])
 
         # ── Click handling ───────────────────────────────────────────────
         # Plotly stores the most recent selection event in st.session_state
