@@ -68,22 +68,35 @@ except Exception:
 # ─────────────────────────────────────────────────────────────
 # VISUAL SHELL
 # ─────────────────────────────────────────────────────────────
-def _inject_app_shell():
-    """Load the global CSS shell + countdown JS into the page.
+def _inject_app_styles():
+    """Inject the CSS half of app_styles.html (everything ABOVE the
+    `<!-- SCRIPT -->` marker). Called once at the top of main_app()
+    so styles are present before any element renders.
+    """
+    css_part, _ = _read_app_shell_parts()
+    if css_part:
+        st.markdown(css_part, unsafe_allow_html=True)
 
-    app_styles.html holds two sections separated by the marker
-    `<!-- SCRIPT -->`:
-      • Everything ABOVE the marker is CSS (in a <style> block) and is
-        injected via st.markdown — Streamlit's sanitizer keeps <style>.
-      • Everything BELOW is JavaScript (in a <script> block) and is
-        injected via st.components.v1.html — Streamlit's sanitizer would
-        strip <script> from a markdown call, so we route it through a
-        zero-height component iframe instead. The script accesses the
-        parent DOM via window.parent.document to update countdowns.
 
-    Called once at the top of main_app(). The login page has its own
-    self-contained Google-style theme and intentionally does not load
-    this shell.
+def _inject_app_script():
+    """Inject the JS half (everything BELOW the marker) via
+    st.components.v1.html. Streamlit's markdown sanitizer strips
+    <script>, so the JS rides in a zero-height iframe and reaches
+    the parent DOM via window.parent.document.
+
+    Called at the *end* of main_app(): the iframe wrapper has a small
+    default margin even at height=0, so placing it at the bottom of
+    the page keeps it from pushing the sticky top bar downward.
+    """
+    _, js_part = _read_app_shell_parts()
+    if js_part and js_part.strip():
+        st.components.v1.html(js_part, height=0)
+
+
+def _read_app_shell_parts():
+    """Read app_styles.html and split it at the `<!-- SCRIPT -->`
+    marker. Returns (css_str, js_str). If the file is missing, returns
+    ('', '') so callers can simply no-op.
     """
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, "app_styles.html")
@@ -91,18 +104,11 @@ def _inject_app_shell():
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
     except FileNotFoundError:
-        # Shell missing → fall back to Streamlit's default look.
-        return
-
-    # Split on the SCRIPT marker. If absent, treat everything as CSS.
+        return "", ""
     if "<!-- SCRIPT -->" in content:
         css_part, js_part = content.split("<!-- SCRIPT -->", 1)
-    else:
-        css_part, js_part = content, ""
-
-    st.markdown(css_part, unsafe_allow_html=True)
-    if js_part.strip():
-        st.components.v1.html(js_part, height=0)
+        return css_part, js_part
+    return content, ""
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1992,8 +1998,8 @@ def main_app():
     # DOM, so the user doesn't see the page "freeze" on every tick.
     st_autorefresh(interval=60000, key="seat_refresh")
 
-    # Inject the global CSS shell once per page render.
-    _inject_app_shell()
+    # Inject CSS FIRST so styles are applied before any element paints.
+    _inject_app_styles()
 
     # The left-hand navigation rail is always visible on every page.
     _render_sidebar()
@@ -2001,17 +2007,22 @@ def main_app():
     token = st.session_state["token"]
 
     # Dispatch to the right page based on session state.
-    current = st.session_state.get("current_page", "home")
+    current      = st.session_state.get("current_page", "home")
     page_fn_name = PAGE_ROUTES.get(current, "landing_page")
-    page_fn = globals().get(page_fn_name)
+    page_fn      = globals().get(page_fn_name)
     if not callable(page_fn):
         # Defensive fallback — should never trip unless PAGE_ROUTES
         # is misconfigured. Land the user back on home.
         st.session_state["current_page"] = "home"
-        landing_page(token)
-        return
+        page_fn = landing_page
 
     page_fn(token)
+
+    # Inject the countdown JS LAST. It rides in a zero-height iframe
+    # component; placing it at the bottom of the page means any leftover
+    # wrapper spacing falls below the visible content instead of above
+    # the sticky top bar.
+    _inject_app_script()
 
 
 # ─────────────────────────────────────────────────────────────
