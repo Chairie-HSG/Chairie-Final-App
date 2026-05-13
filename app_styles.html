@@ -103,15 +103,42 @@
   /* Hide Streamlit's top header completely so our own sticky top bar
      can pin to the very top of the viewport (was just transparent
      before, which left a ~50px void above our bar). */
-  header[data-testid="stHeader"] { display: none !important; }
+  header[data-testid="stHeader"] {
+    display: none !important;
+    height: 0 !important;
+  }
 
-  /* Constrain the main column on very wide screens. Tight top padding
-     because the chairie top bar pins itself to the top of this column
-     and provides its own breathing room. */
+  /* ────────────────────────────────────────────────────────────
+     KILL ALL TOP PADDING above the main content
+     Streamlit ships with ~6rem padding-top on the block container
+     (sized to clear the now-hidden header). We override both the
+     old `.main .block-container` selector AND the new
+     `[data-testid="stMainBlockContainer"]` selector so this works
+     across Streamlit versions. !important because Streamlit's own
+     styles are loaded with high specificity.
+     ────────────────────────────────────────────────────────────*/
+  [data-testid="stAppViewContainer"] { padding-top: 0 !important; }
+  [data-testid="stMain"]              { padding-top: 0 !important; }
+  [data-testid="stMainBlockContainer"],
   .main .block-container {
     max-width:        1400px;
-    padding-top:      0.25rem;
+    padding-top:      0.4rem !important;
     padding-bottom:   3rem;
+  }
+
+  /* The countdown JS lives in a components.v1.html iframe with
+     height=0. The wrapper Streamlit puts around it can still have a
+     visible margin / min-height — squash it so it doesn't push the
+     top bar down. */
+  iframe[title="streamlit_components.v1.html.html"][height="0"],
+  iframe[title="streamlit_extras.app_logo.app_logo"][height="0"] {
+    display: none !important;
+  }
+  .stElementContainer:has(> iframe[height="0"]),
+  div[data-testid="stIFrame"]:has(iframe[height="0"]) {
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
   }
 
   /* ────────────────────────────────────────────────────────────
