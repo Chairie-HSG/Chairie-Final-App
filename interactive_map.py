@@ -145,6 +145,94 @@ def get_image_dimensions(image_path: Optional[str] = None) -> Optional[Tuple[int
 
 
 # ---------------------------------------------------------------------------
+# Zoom controls
+# ---------------------------------------------------------------------------
+
+# Stops on the zoom slider, in order. 1.0 = no zoom (the chart's natural
+# view). Multiplying the half-span of each axis by 1/factor gives the new
+# visible range — smaller range = more zoomed in.
+ZOOM_FACTORS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+
+
+def _get_zoom(key: str) -> float:
+    """Current zoom factor for the chart identified by `key`."""
+    return float(st.session_state.get(f"{key}__zoom", 1.0))
+
+
+def _set_zoom(key: str, value: float) -> None:
+    """Clamp + store the zoom factor. The next chart render reads this."""
+    value = max(ZOOM_FACTORS[0], min(ZOOM_FACTORS[-1], value))
+    st.session_state[f"{key}__zoom"] = value
+
+
+def _render_zoom_bar(key: str) -> None:
+    """Compact zoom toolbar drawn directly above the chart.
+
+    Three buttons + a percentage display. State persists per chart key
+    in st.session_state, so each floor keeps its own zoom level and
+    the value survives Streamlit reruns (auto-refresh etc.) without
+    any JavaScript.
+    """
+    current = _get_zoom(key)
+
+    # st.container(key=...) requires Streamlit 1.42+. The key adds a
+    # `.st-key-chairie_map_zoom_bar` class which the CSS in
+    # app_styles.html targets for the pill-shaped button styling.
+    with st.container(key="chairie_map_zoom_bar"):
+        # 4 narrow inner columns flanked by spacers so the bar
+        # stays compact and centered above the chart on every
+        # screen size.
+        spacer_l, b_out, b_pct, b_in, b_reset, spacer_r = st.columns(
+            [3, 1, 2, 1, 1, 3]
+        )
+
+        with b_out:
+            if st.button(
+                "−",
+                key=f"{key}__zoom_btn_out",
+                use_container_width=True,
+                disabled=(current <= ZOOM_FACTORS[0]),
+                help="Zoom out",
+            ):
+                # Step DOWN to the previous factor in ZOOM_FACTORS.
+                idx = ZOOM_FACTORS.index(current) if current in ZOOM_FACTORS else 2
+                _set_zoom(key, ZOOM_FACTORS[max(0, idx - 1)])
+                st.rerun()
+
+        with b_pct:
+            # Percentage label — plain markdown so it doesn't look
+            # like a button. Centered via the CSS rule for
+            # .chairie-zoom-pct.
+            st.markdown(
+                f'<div class="chairie-zoom-pct">{int(round(current * 100))}%</div>',
+                unsafe_allow_html=True,
+            )
+
+        with b_in:
+            if st.button(
+                "+",
+                key=f"{key}__zoom_btn_in",
+                use_container_width=True,
+                disabled=(current >= ZOOM_FACTORS[-1]),
+                help="Zoom in",
+            ):
+                idx = ZOOM_FACTORS.index(current) if current in ZOOM_FACTORS else 2
+                _set_zoom(key, ZOOM_FACTORS[min(len(ZOOM_FACTORS) - 1, idx + 1)])
+                st.rerun()
+
+        with b_reset:
+            if st.button(
+                "↺",
+                key=f"{key}__zoom_btn_reset",
+                use_container_width=True,
+                disabled=(current == 1.0),
+                help="Reset zoom",
+            ):
+                _set_zoom(key, 1.0)
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 
@@ -319,16 +407,35 @@ def render_interactive_map(
     )
 
     # ── 4. Axes: hide them, set the image's coordinate space ──────────────
+    # Apply the current zoom factor by shrinking the visible axis range
+    # around its center. ZOOM_FACTORS[2] is 1.0 (natural view); higher
+    # factors zoom in (smaller visible range); lower factors zoom out.
+    # State lives in st.session_state[f"{key}__zoom"] so the choice
+    # persists across Streamlit reruns and the auto-refresh poll.
+    zoom = _get_zoom(key)
+    x0_orig, x1_orig = 0.0,         float(img_w)
+    y0_orig, y1_orig = float(img_h), 0.0            # inverted, top-down
+    cx = (x0_orig + x1_orig) / 2.0
+    cy = (y0_orig + y1_orig) / 2.0
+    # Formula preserves axis direction (positive or inverted) for any
+    # zoom: each endpoint moves toward the center by a factor of 1/zoom.
+    x_range = [
+        cx + (x0_orig - cx) / zoom,
+        cx + (x1_orig - cx) / zoom,
+    ]
+    y_range = [
+        cy + (y0_orig - cy) / zoom,
+        cy + (y1_orig - cy) / zoom,
+    ]
+
     fig.update_xaxes(
         visible=False,
-        range=[0, img_w],
+        range=x_range,
         constrain="domain",
     )
     fig.update_yaxes(
         visible=False,
-        # Image y goes top-down; Plotly's default is bottom-up. Inverting
-        # the range makes seat (x=10, y=10) appear in the upper-left.
-        range=[img_h, 0],
+        range=y_range,
         scaleanchor="x",
         scaleratio=1,
     )
@@ -339,6 +446,12 @@ def render_interactive_map(
         paper_bgcolor="rgba(0,0,0,0)",
         dragmode="pan",
     )
+
+    # ── 4b. Zoom toolbar above the map ────────────────────────────────────
+    # Rendered HERE so Streamlit places it directly above st.plotly_chart
+    # below. Pressing a button writes the new factor into session state
+    # and reruns — the next render reads it back at the top of step 4.
+    _render_zoom_bar(key)
 
     # ── 5. Render. on_select="rerun" delivers click events to Python ──────
     event = st.plotly_chart(
