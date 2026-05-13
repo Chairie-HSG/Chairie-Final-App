@@ -117,6 +117,21 @@
     touch-action: auto !important;
   }
 
+  /* Plotly charts (the seat map AND the forecast charts) install
+     their own touch-event handlers for pan/zoom and call
+     preventDefault on touchstart, which eats the browser's pinch
+     gesture before Chrome can see it. `touch-action: pinch-zoom`
+     tells the browser to handle pinch as a NATIVE gesture, taking
+     precedence over Plotly's own handler. Single-finger taps still
+     reach Plotly (so seat-click on the map still works), only the
+     two-finger pinch is intercepted by the browser. */
+  [data-testid="stPlotlyChart"],
+  [data-testid="stPlotlyChart"] *,
+  .js-plotly-plot,
+  .js-plotly-plot * {
+    touch-action: pinch-zoom !important;
+  }
+
   /* Keep Streamlit's header at its DEFAULT size and position.
      It gives the page a natural top inset, and (importantly) it's
      where the sidebar's expand chevron lives. Just blend its
