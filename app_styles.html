@@ -100,12 +100,17 @@
   /* Hide Streamlit's default chrome */
   #MainMenu       { visibility: hidden; }
   footer          { visibility: hidden; }
-  header          { background: transparent !important; }
+  /* Hide Streamlit's top header completely so our own sticky top bar
+     can pin to the very top of the viewport (was just transparent
+     before, which left a ~50px void above our bar). */
+  header[data-testid="stHeader"] { display: none !important; }
 
-  /* Constrain the main column on very wide screens */
+  /* Constrain the main column on very wide screens. Tight top padding
+     because the chairie top bar pins itself to the top of this column
+     and provides its own breathing room. */
   .main .block-container {
     max-width:        1400px;
-    padding-top:      1.4rem;
+    padding-top:      0.25rem;
     padding-bottom:   3rem;
   }
 
@@ -304,8 +309,14 @@
   /* The whole top bar is rendered as st.container(key="chairie_topbar"),
      which Streamlit wraps in a div with class "st-key-chairie_topbar".
      This lets us style the bar like a card AND scope button overrides
-     so they only affect the email pill + logout button. */
+     so they only affect the email pill + logout button.
+     STICKY: position: sticky + top: 0 pins the bar at the top of the
+     viewport as the user scrolls. z-index keeps it above scrolling
+     content; the solid background prevents bleed-through. */
   .st-key-chairie_topbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
     background: var(--bg-card);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-md);
@@ -894,4 +905,114 @@
   .stCaption, .stMarkdown p {
     color: var(--text-secondary);
   }
+
+  /* ────────────────────────────────────────────────────────────
+     LIVE COUNTDOWN
+     Python renders <span class="chairie-countdown" data-target="ISO">
+     and the JS at the bottom of this file ticks every second.
+     Monospace + tabular numerals so digits don't shift width.
+     ────────────────────────────────────────────────────────────*/
+  .chairie-countdown {
+    font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-weight: 700;
+    color: var(--chairie-green);
+    background: var(--chairie-green-soft);
+    padding: 2px 8px;
+    border-radius: 6px;
+    display: inline-block;
+    min-width: 56px;
+    text-align: center;
+  }
+  /* When the surrounding alert is warning/danger, the pill tints to match */
+  .chairie-alert-warning .chairie-countdown {
+    color: #8a5a00;
+    background: var(--chairie-honey-soft);
+  }
+  .chairie-alert-error .chairie-countdown {
+    color: var(--chairie-red);
+    background: var(--chairie-red-soft);
+  }
+
+  /* ────────────────────────────────────────────────────────────
+     CUSTOM ALERT BOXES
+     Used instead of st.warning / st.success / st.error so the
+     message body can include the live <span class="chairie-countdown">.
+     Streamlit's native alerts render their content as plain text,
+     which would freeze the countdown.
+     ────────────────────────────────────────────────────────────*/
+  .chairie-alert {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    margin: 8px 0 16px 0;
+    border: 1px solid transparent;
+    font-size: 0.95rem;
+    line-height: 1.45;
+  }
+  .chairie-alert-success {
+    background: var(--chairie-green-soft);
+    border-color: var(--chairie-green);
+    color: #1f3d12;
+  }
+  .chairie-alert-warning {
+    background: var(--chairie-honey-soft);
+    border-color: var(--chairie-honey);
+    color: #5c4100;
+  }
+  .chairie-alert-error {
+    background: var(--chairie-red-soft);
+    border-color: var(--chairie-red);
+    color: #6b0510;
+  }
+  .chairie-alert-info {
+    background: var(--bg-subtle);
+    border-color: var(--border-soft);
+    color: var(--text-strong);
+  }
 </style>
+
+<!-- SCRIPT -->
+<!--
+  Everything below the SCRIPT marker is JavaScript injected via
+  st.components.v1.html() (from streamlit_app.py:_inject_app_shell).
+  It reaches into the parent DOM through window.parent.document
+  because Streamlit's main page and components live at the same
+  origin. The script:
+
+    1. Clears any previous interval left over from a Streamlit rerun
+       (otherwise every refresh would stack a new 1-second ticker).
+    2. Reads every <span class="chairie-countdown" data-target="ISO">
+       and computes the remaining time relative to Date.now().
+    3. Repaints the text every second — purely client side, so the
+       countdown never freezes between Streamlit reruns.
+-->
+<script>
+(function () {
+  const parentWin = window.parent;
+  const doc       = parentWin.document;
+
+  // Kill the previous interval if we're being re-injected on a rerun.
+  if (parentWin.__chairieCountdownInterval) {
+    clearInterval(parentWin.__chairieCountdownInterval);
+  }
+
+  // Tick once, then every second.
+  function tick() {
+    const els = doc.querySelectorAll(".chairie-countdown[data-target]");
+    const now = Date.now();
+    els.forEach(function (el) {
+      const target = Date.parse(el.dataset.target);
+      if (isNaN(target)) return;
+      let secs = Math.max(0, Math.floor((target - now) / 1000));
+      const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+      const ss = String(secs % 60).padStart(2, "0");
+      el.textContent = mm + ":" + ss;
+    });
+  }
+  tick();
+  parentWin.__chairieCountdownInterval = setInterval(tick, 1000);
+})();
+</script>
