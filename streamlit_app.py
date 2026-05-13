@@ -1708,15 +1708,6 @@ def map_page(token):
     """
     _render_top_bar("Library Map")
 
-    # Hidden marker so the mobile-only +/- zoom controls (defined in
-    # app_styles.html's JS block) know to appear on this page. The
-    # landing page also has Plotly charts (the forecast bars) — we
-    # don't want zoom controls there, so we tag this page specifically.
-    st.markdown(
-        '<div id="chairie-map-page-marker" style="display:none"></div>',
-        unsafe_allow_html=True,
-    )
-
     # ── User status banner ───────────────────────────────────────────────
     # Hoisted here (not nested inside the if-success branch) so the QR
     # check-in section at the bottom of this page can reuse the same
