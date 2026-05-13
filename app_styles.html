@@ -1167,36 +1167,61 @@
   // ─────────────────────────────────────────────────────────────
   // MOBILE PINCH-ZOOM ON THE SEAT MAP
   // ─────────────────────────────────────────────────────────────
-  // Plotly's touch handler claims the first finger for one-finger
-  // pan, which means it never recognizes a two-finger pinch. To
-  // get pinch working we need `dragmode: false` — but only on
-  // mobile, because on desktop we want to KEEP drag-to-pan.
+  // Plotly's touch handler grabs the first finger for one-finger
+  // pan AND calls preventDefault on touchstart — which kills any
+  // chance of the browser recognizing a two-finger pinch as a
+  // native page-zoom gesture.
   //
-  // What we do: every second, find the seat-map Plotly chart and,
-  // if we're on a narrow viewport (≤ 768px) and the chart's
-  // current dragmode is still "pan", call Plotly.relayout to
-  // switch it off. Streamlit's 60-second auto-refresh re-renders
-  // the chart with dragmode="pan" each time; this poll catches
-  // that and re-applies the override within ~1s.
+  // Strategy: intercept multi-finger touches on Plotly charts in
+  // the CAPTURE phase, BEFORE Plotly's listeners get a chance to
+  // run. We stopPropagation so Plotly never sees the event,
+  // never calls preventDefault, and the browser is free to
+  // handle the pinch as a native page zoom (allowed via the
+  // permissive viewport meta tag set further down in this file).
   //
-  // The CSS `touch-action: pinch-zoom` rule near the top of this
-  // file does the other half of the job — it tells the browser
-  // it can also claim pinch as a native gesture if Plotly's
-  // gesture detection ever fails to grab it.
-  function enableMobilePinch() {
-    if (window.innerWidth > 768) return;             // desktop = no-op
-    const Plotly = parentWin.Plotly;
-    if (!Plotly || typeof Plotly.relayout !== "function") return;
-    doc.querySelectorAll(".js-plotly-plot").forEach(function (plot) {
-      const layout = plot._fullLayout || plot.layout;
-      if (!layout || layout.dragmode !== "pan") return;
-      // Only touch charts that have dragmode="pan" (the seat map).
-      // Forecast charts on the landing page don't, so they're
-      // untouched.
-      Plotly.relayout(plot, { dragmode: false });
-    });
+  // Result:
+  //   • Desktop: untouched. Click+drag still pans, mouse wheel
+  //     still zooms (those use mouse events, not touch events).
+  //   • Mobile, 1-finger drag: Plotly sees a single-finger touch
+  //     and pans the chart (we only block 2+ fingers).
+  //   • Mobile, 2-finger pinch: Plotly never sees it, the
+  //     browser zooms the page natively.
+  //
+  // This requires no Plotly API access (the previous approach
+  // depended on `window.Plotly` which isn't reliably exposed
+  // across Streamlit versions) and survives every Streamlit
+  // rerun without re-installing because the listener lives on
+  // the parent document, not on the chart element.
+  function enablePageLevelPinch() {
+    if (window.innerWidth > 768) return;          // desktop = no-op
+    if (parentWin.__chairiePinchInstalled) return; // install once
+
+    function interceptMultiTouch(e) {
+      if (e.touches && e.touches.length >= 2 &&
+          e.target && e.target.closest &&
+          e.target.closest(".js-plotly-plot")) {
+        // Don't let Plotly's listener run at all — that way it
+        // can't preventDefault and the browser keeps the gesture
+        // for native pinch-zoom.
+        e.stopPropagation();
+      }
+    }
+
+    // Capture phase = fires before the bubbling listeners Plotly
+    // attaches. passive:false documents that the handler reserves
+    // the right to control default behavior (we don't call
+    // preventDefault, but the flag matters for stopPropagation
+    // to be effective on touchmove in some browsers).
+    parentWin.document.addEventListener(
+      "touchstart", interceptMultiTouch, { capture: true, passive: false }
+    );
+    parentWin.document.addEventListener(
+      "touchmove",  interceptMultiTouch, { capture: true, passive: false }
+    );
+
+    parentWin.__chairiePinchInstalled = true;
   }
-  enableMobilePinch();
+  enablePageLevelPinch();
 
   // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
@@ -1217,9 +1242,6 @@
     });
   }
   tick();
-  parentWin.__chairieCountdownInterval = setInterval(function () {
-    tick();
-    enableMobilePinch();   // re-apply after any Streamlit rerender
-  }, 1000);
+  parentWin.__chairieCountdownInterval = setInterval(tick, 1000);
 })();
 </script>
