@@ -101,6 +101,22 @@
   #MainMenu       { visibility: hidden; }
   footer          { visibility: hidden; }
 
+  /* ────────────────────────────────────────────────────────────
+     MOBILE PINCH-ZOOM
+     Belt-and-suspenders alongside the viewport meta-tag override
+     (see the <script> block at the bottom of this file). Some
+     Streamlit defaults set restrictive touch-action on the root
+     containers; reset them to `auto` so two-finger pinch zoom
+     works on phones.
+     ────────────────────────────────────────────────────────────*/
+  html,
+  body,
+  [data-testid="stAppViewContainer"],
+  [data-testid="stMain"],
+  [data-testid="stMainBlockContainer"] {
+    touch-action: auto !important;
+  }
+
   /* Keep Streamlit's header at its DEFAULT size and position.
      It gives the page a natural top inset, and (importantly) it's
      where the sidebar's expand chevron lives. Just blend its
@@ -124,10 +140,14 @@
   /* Constrain the main column on very wide screens. We leave the
      default top padding alone — Streamlit's header already supplies
      the visual top spacing, so adding more here just causes the
-     "cropping" look the user reported. */
+     "cropping" look the user reported. The 1rem top padding gives
+     a small gap below Streamlit's own header so the chairie bar
+     sits just under it, instead of ~6rem (Streamlit's default)
+     which leaves a big empty band. */
   [data-testid="stMainBlockContainer"],
   .main .block-container {
     max-width:        1400px;
+    padding-top:      1rem !important;
     padding-bottom:   3rem;
   }
 
@@ -1063,6 +1083,23 @@
   const parentWin = window.parent;
   const doc       = parentWin.document;
 
+  // ── Enable pinch-to-zoom on mobile ──────────────────────────────
+  // Streamlit ships a viewport meta tag that often includes
+  // `maximum-scale=1` or `user-scalable=no`, both of which disable
+  // pinch-to-zoom on phones. Rewrite (or create) the tag so two-finger
+  // zoom works. Runs once per page injection — cheap and idempotent.
+  let meta = doc.querySelector('meta[name="viewport"]');
+  if (!meta) {
+    meta = doc.createElement("meta");
+    meta.name = "viewport";
+    doc.head.appendChild(meta);
+  }
+  meta.setAttribute(
+    "content",
+    "width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes"
+  );
+
+  // ── Live countdown ticker ──────────────────────────────────────
   // Kill the previous interval if we're being re-injected on a rerun.
   if (parentWin.__chairieCountdownInterval) {
     clearInterval(parentWin.__chairieCountdownInterval);
