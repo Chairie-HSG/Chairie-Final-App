@@ -102,12 +102,16 @@
   footer          { visibility: hidden; }
 
   /* ────────────────────────────────────────────────────────────
-     MOBILE PINCH-ZOOM
-     Belt-and-suspenders alongside the viewport meta-tag override
-     (see the <script> block at the bottom of this file). Some
-     Streamlit defaults set restrictive touch-action on the root
-     containers; reset them to `auto` so two-finger pinch zoom
-     works on phones.
+     MOBILE TOUCH BEHAVIOUR
+     Let the page itself respond normally to touches (scrolling,
+     etc). DO NOT override touch-action inside Plotly charts:
+     Plotly ships with `touch-action: none` on its drag layer so
+     its own JS can read touch events and convert two-finger
+     gestures into a chart zoom (with `scrollZoom: true`). Any
+     `!important touch-action: pinch-zoom` rule here would steal
+     pinches from Plotly and hand them to the browser, where
+     Streamlit's `user-scalable=no` viewport then refuses to zoom
+     — killing the gesture entirely.
      ────────────────────────────────────────────────────────────*/
   html,
   body,
@@ -115,21 +119,6 @@
   [data-testid="stMain"],
   [data-testid="stMainBlockContainer"] {
     touch-action: auto !important;
-  }
-
-  /* Plotly charts (the seat map AND the forecast charts) install
-     their own touch-event handlers for pan/zoom and call
-     preventDefault on touchstart, which eats the browser's pinch
-     gesture before Chrome can see it. `touch-action: pinch-zoom`
-     tells the browser to handle pinch as a NATIVE gesture, taking
-     precedence over Plotly's own handler. Single-finger taps still
-     reach Plotly (so seat-click on the map still works), only the
-     two-finger pinch is intercepted by the browser. */
-  [data-testid="stPlotlyChart"],
-  [data-testid="stPlotlyChart"] *,
-  .js-plotly-plot,
-  .js-plotly-plot * {
-    touch-action: pinch-zoom !important;
   }
 
   /* Keep Streamlit's header at its DEFAULT size and position.
@@ -1099,130 +1088,31 @@
   const doc       = parentWin.document;
 
   // ─────────────────────────────────────────────────────────────
-  // ENABLE PINCH-TO-ZOOM ON MOBILE  (brute-force version)
-  // ─────────────────────────────────────────────────────────────
-  // Streamlit's index.html ships with
-  //   width=device-width,initial-scale=1,shrink-to-fit=no,user-scalable=no
-  // i.e. zoom is disabled by default.
-  //
-  // Strategy:
-  //   1. REMOVE every <meta name="viewport"> and APPEND a fresh
-  //      permissive one. setAttribute alone is unreliable on
-  //      iOS Safari.
-  //   2. Re-run that check every 500ms. If Streamlit ever
-  //      rerenders <head> and brings back its restrictive tag, the
-  //      poll catches it within half a second. This replaces the
-  //      previous MutationObserver approach which silently failed
-  //      if Streamlit replaced the head node wholesale.
-  //
-  // Side-effect: <body data-chairie-viewport-fix="active"> is set
-  // on the parent document. That's a debug marker you can check
-  // in DevTools to confirm this script actually ran.
-  // ─────────────────────────────────────────────────────────────
-  const VIEWPORT_OK =
-    "width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes";
-
-  function viewportLooksOk(content) {
-    if (!content) return false;
-    return content.indexOf("user-scalable=yes") >= 0 &&
-           content.indexOf("maximum-scale=5")  >= 0;
-  }
-
-  function fixViewport() {
-    if (!doc || !doc.head) return;
-    try {
-      const tags = doc.querySelectorAll('meta[name="viewport"]');
-      // Only act if no permissive tag is already present. Avoids
-      // an infinite loop of remove/append on our own changes.
-      let alreadyGood = false;
-      tags.forEach(function (m) {
-        if (viewportLooksOk(m.getAttribute("content"))) alreadyGood = true;
-      });
-      if (alreadyGood && tags.length === 1) return;
-
-      tags.forEach(function (m) { m.remove(); });
-
-      const meta = doc.createElement("meta");
-      meta.setAttribute("name", "viewport");
-      meta.setAttribute("content", VIEWPORT_OK);
-      doc.head.appendChild(meta);
-
-      // Visible debug marker so you can confirm via DevTools that
-      // the script actually ran. Look for <body data-chairie-viewport-fix>.
-      if (doc.body) {
-        doc.body.setAttribute("data-chairie-viewport-fix", "active");
-      }
-    } catch (e) { /* swallow */ }
-  }
-
-  // Apply immediately, then keep applying — half-second polling is
-  // cheap and bullet-proof against Streamlit re-renders that would
-  // otherwise revert our change.
-  fixViewport();
-  if (parentWin.__chairieViewportTimer) {
-    clearInterval(parentWin.__chairieViewportTimer);
-  }
-  parentWin.__chairieViewportTimer = setInterval(fixViewport, 500);
-
-  // ─────────────────────────────────────────────────────────────
   // MOBILE PINCH-ZOOM ON THE SEAT MAP
   // ─────────────────────────────────────────────────────────────
-  // Plotly's touch handler grabs the first finger for one-finger
-  // pan AND calls preventDefault on touchstart — which kills any
-  // chance of the browser recognizing a two-finger pinch as a
-  // native page-zoom gesture.
+  // No JS is required. Plotly's own touch handler already gives us:
+  //   • 1 finger drag  → pan (with dragmode: "pan")
+  //   • 2 finger pinch → zoom (with config.scrollZoom: true)
+  //   • 1 finger tap   → click event (selects a seat)
   //
-  // Strategy: intercept multi-finger touches on Plotly charts in
-  // the CAPTURE phase, BEFORE Plotly's listeners get a chance to
-  // run. We stopPropagation so Plotly never sees the event,
-  // never calls preventDefault, and the browser is free to
-  // handle the pinch as a native page zoom (allowed via the
-  // permissive viewport meta tag set further down in this file).
+  // For this to work, two things must NOT happen:
+  //   1. The CSS in this file must not override Plotly's
+  //      `touch-action: none` on the chart. We used to do that
+  //      with a `pinch-zoom !important` rule, which handed the
+  //      pinch to the browser — and Streamlit's default
+  //      `user-scalable=no` viewport then refused to zoom, so
+  //      the gesture died. That rule has been removed.
+  //   2. No script may `stopPropagation` two-finger touchstart
+  //      events on Plotly charts. We used to try to do that to
+  //      force a native page-level zoom. Same outcome — Plotly
+  //      never saw the pinch and the browser didn't zoom either.
   //
-  // Result:
-  //   • Desktop: untouched. Click+drag still pans, mouse wheel
-  //     still zooms (those use mouse events, not touch events).
-  //   • Mobile, 1-finger drag: Plotly sees a single-finger touch
-  //     and pans the chart (we only block 2+ fingers).
-  //   • Mobile, 2-finger pinch: Plotly never sees it, the
-  //     browser zooms the page natively.
+  // With both of those gone, Plotly's `scrollZoom: true` config
+  // (set in interactive_map.py) does the right thing on its own.
   //
-  // This requires no Plotly API access (the previous approach
-  // depended on `window.Plotly` which isn't reliably exposed
-  // across Streamlit versions) and survives every Streamlit
-  // rerun without re-installing because the listener lives on
-  // the parent document, not on the chart element.
-  function enablePageLevelPinch() {
-    if (window.innerWidth > 768) return;          // desktop = no-op
-    if (parentWin.__chairiePinchInstalled) return; // install once
-
-    function interceptMultiTouch(e) {
-      if (e.touches && e.touches.length >= 2 &&
-          e.target && e.target.closest &&
-          e.target.closest(".js-plotly-plot")) {
-        // Don't let Plotly's listener run at all — that way it
-        // can't preventDefault and the browser keeps the gesture
-        // for native pinch-zoom.
-        e.stopPropagation();
-      }
-    }
-
-    // Capture phase = fires before the bubbling listeners Plotly
-    // attaches. passive:false documents that the handler reserves
-    // the right to control default behavior (we don't call
-    // preventDefault, but the flag matters for stopPropagation
-    // to be effective on touchmove in some browsers).
-    parentWin.document.addEventListener(
-      "touchstart", interceptMultiTouch, { capture: true, passive: false }
-    );
-    parentWin.document.addEventListener(
-      "touchmove",  interceptMultiTouch, { capture: true, passive: false }
-    );
-
-    parentWin.__chairiePinchInstalled = true;
-  }
-  enablePageLevelPinch();
-
+  // Desktop is unaffected (click+drag pans, mouse wheel zooms —
+  // both use mouse events, not touch).
+  //
   // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
