@@ -942,6 +942,40 @@
   }
 
   /* ────────────────────────────────────────────────────────────
+     SUPPORT FOOTER
+     The Support & Contact section appears at the bottom of every
+     page (rendered via Support_page.render_support_page()). These
+     rules style the divider above it and tone down the big
+     st.title("Support & Contact") H1 so it feels like a footer
+     section header instead of competing with the page's own title.
+     Scoped under .chairie-support-divider's general sibling so it
+     ONLY affects the support section, not other H1s on the page.
+     ────────────────────────────────────────────────────────────*/
+  .chairie-support-divider {
+    border: none;
+    border-top: 1px solid var(--border-soft);
+    margin: 48px 0 24px 0;
+  }
+  /* Tone down the H1 — the "Support & Contact" title — so it reads
+     as a footer section header. Same for subheaders + dividers. */
+  .chairie-support-divider ~ .stElementContainer h1,
+  .chairie-support-divider ~ div h1 {
+    font-size: 1.4rem !important;
+    color: var(--text-strong);
+    margin-top: 0;
+    margin-bottom: 8px;
+  }
+  .chairie-support-divider ~ .stElementContainer h2,
+  .chairie-support-divider ~ div h2,
+  .chairie-support-divider ~ .stElementContainer h3,
+  .chairie-support-divider ~ div h3 {
+    font-size: 1.05rem !important;
+    color: var(--text-secondary);
+    margin-top: 18px;
+    margin-bottom: 6px;
+  }
+
+  /* ────────────────────────────────────────────────────────────
      LIVE COUNTDOWN
      Python renders <span class="chairie-countdown" data-target="ISO">
      and the JS at the bottom of this file ticks every second.
