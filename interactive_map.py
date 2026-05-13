@@ -337,10 +337,16 @@ def render_interactive_map(
         height=height,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        # NOTE: dragmode is "pan" by default (good on desktop), but the
-        # JS in app_styles.html overrides it to False on mobile so
-        # Plotly will recognize two-finger pinch instead of swallowing
-        # every touch for one-finger pan.
+        # dragmode "pan" gives click+drag panning on desktop AND
+        # one-finger panning on mobile. Combined with the
+        # `scrollZoom: True` config below, mobile users get
+        # two-finger pinch-to-zoom on the chart for free (Plotly's
+        # built-in gesture handler). Don't override `touch-action`
+        # on the chart from CSS — Plotly sets `touch-action: none`
+        # on its drag layer so it can read raw touch events; any
+        # `pinch-zoom` override would hand the pinch to the
+        # browser, which then refuses to do anything (Streamlit's
+        # viewport has `user-scalable=no`), and the gesture dies.
         dragmode="pan",
     )
 
