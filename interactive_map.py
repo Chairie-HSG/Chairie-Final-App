@@ -42,14 +42,18 @@ STATUS_COLORS: Dict[str, str] = {
     "maintenance": "#9ca3af",
 }
 
-DEFAULT_DOT_COLOR = "#9ca3af" #case of error
+DEFAULT_DOT_COLOR = "#9ca3af" #color if seat has unknown state
 
 
 # ---------------------------------------------------------------------------
 # File discovery
 # ---------------------------------------------------------------------------
 
-"
+"""
+    Reliability check to find correct file path 
+    Checks through the valid filenames to avoid crashes if file extensions change
+
+"""
 def _find_file(candidates: List[str], custom_path: Optional[str] = None) -> Optional[str]:
 
     if custom_path and os.path.exists(custom_path):
@@ -70,6 +74,11 @@ def _find_file(candidates: List[str], custom_path: Optional[str] = None) -> Opti
 # Data
 # ---------------------------------------------------------------------------
 
+""" 
+Loads the JSON file containing the coordinates of the seat
+
+Returns the Python dictionary
+"""
 def load_map_data(json_path: Optional[str] = None, silent: bool = False) -> Optional[Dict]:
     """Load the seat-layout JSON. Returns the parsed dict or None."""
     if json_path is not None:
@@ -96,13 +105,15 @@ def load_map_data(json_path: Optional[str] = None, silent: bool = False) -> Opti
             st.error(f"Error loading map data from {path}: {e}")
         return None
 
-
+""" 
+Gives the colro for a given seat based n status
+"""
 def get_seat_color(status: Optional[str]) -> str:
     return STATUS_COLORS.get((status or "").lower(), DEFAULT_DOT_COLOR)
 
 
 def get_image_dimensions(image_path: Optional[str] = None) -> Optional[Tuple[int, int]]:
-    """Return (width, height) of the floor plan image, or None if missing."""
+    """Return (width, height) of the floor plan image"""
     try:
         from PIL import Image
     except ImportError:
@@ -130,24 +141,14 @@ def render_interactive_map(
     show_diagnostics: bool = False,
     key: str = "library_map_chart",
 ) -> Optional[Dict]:
-    """Render the interactive floor map.
+     """
+    Draws the full map using Plotly.
+    We used AI to help us utilize Plotly as we had to adopt a new library very quickly
 
-    Returns the seat dict the user just clicked on this rerun, or None.
-
-    Args:
-        seats_data: list of seat dicts with at least ``id``, ``x``, ``y``, ``status``.
-        selected_seat_id: optional id to render with a highlight ring.
-        image_path: path to the floor plan image (auto-detected if None).
-        layout_canvas_size: ``(W, H)`` the JSON coords were authored against.
-            Defaults to the image's own size (no scaling).
-        height: chart height in pixels.
-        show_diagnostics: if True, show a small caption with the image's
-            natural size, the JSON's max coords, the canvas being used, and
-            an aspect-matched canvas suggestion when a likely mismatch is
-            detected. Use this when calibrating a new floor's map.
-        key: Streamlit widget key.
+    Plotly takes care of clickable seats, hovering, zooming, selecting seat etc.
+    This function returns the seat dictionary that was clicked
     """
-    # Lazy imports so the app keeps running with clear errors if a dep is missing
+    #Checks if plotly / PIL is imported 
     try:
         import plotly.graph_objects as go
     except ImportError:
@@ -170,13 +171,12 @@ def render_interactive_map(
         st.warning("No seat data available.")
         return None
 
-    # ── 1. Figure out the coordinate space ────────────────────────────────
+    # Figure out the coordinate space
     img_file = _find_file(_IMAGE_CANDIDATES, custom_path=image_path)
     img = Image.open(img_file) if img_file else None
     img_w, img_h = (img.size if img else (1300, 850))
 
-    # If the JSON was authored on a smaller canvas than the actual image,
-    # scale seat coordinates up so dots line up with the chairs.
+    # Scaling to fix potential alignment issues.
     if layout_canvas_size:
         canvas_w, canvas_h = layout_canvas_size
     else:
@@ -184,8 +184,7 @@ def render_interactive_map(
     scale_x = img_w / canvas_w
     scale_y = img_h / canvas_h
 
-    # ── Optional calibration diagnostic ───────────────────────────────────
-    if show_diagnostics:
+    if show_diagnostics:     #Info on if the map needs to be debugged
         max_jx = max((int(s.get("x", 0)) for s in seats_data), default=0)
         max_jy = max((int(s.get("y", 0)) for s in seats_data), default=0)
         st.caption(
@@ -194,9 +193,7 @@ def render_interactive_map(
             f"layout canvas: {canvas_w}×{canvas_h} • "
             f"scale: ×{scale_x:.3f}, ×{scale_y:.3f}"
         )
-        # If dots cover only a fraction of the image and no canvas was
-        # specified, suggest an aspect-matched canvas the user can paste
-        # into `layout_canvas_size`.
+
         if (max_jx < img_w * 0.85 or max_jy < img_h * 0.85) and layout_canvas_size is None:
             image_aspect = img_w / img_h
             json_aspect = (max_jx / max_jy) if max_jy else 0.0
@@ -212,27 +209,29 @@ def render_interactive_map(
                 f"try `layout_canvas_size=({sug_w}, {sug_h})`."
             )
 
-    # ── 2. Build per-seat arrays for the scatter trace ────────────────────
+    # Build per-seat arrays for the scatter trace 
+    #Lists for storing seat info
     xs:       List[float] = []
     ys:       List[float] = []
     ids:      List[int]   = []
     statuses: List[str]   = []
     colors:   List[str]   = []
+    #Loop through every seat
     for seat in seats_data:
         try:
-            xs.append(int(seat["x"]) * scale_x)
+            xs.append(int(seat["x"]) * scale_x)     #Align dots (here x axis, next y axis)
             ys.append(int(seat["y"]) * scale_y)
             ids.append(int(seat["id"]))
         except (KeyError, TypeError, ValueError):
             continue
         status = str(seat.get("status", "available")).lower()
         statuses.append(status.title())
-        colors.append(get_seat_color(status))
+        colors.append(get_seat_color(status)) #Display status color 
 
-    # ── 3. Build the Plotly figure ────────────────────────────────────────
+    # Build the Plotly figure 
     fig = go.Figure()
 
-    # Floor plan as a background image (drawn below the dots)
+    #Display floor image behind the dots
     if img is not None:
         fig.add_layout_image(
             dict(
@@ -247,25 +246,24 @@ def render_interactive_map(
             )
         )
 
-    # One scatter trace holds every seat. We pass id+status+color per point
-    # in customdata so the hover template and click handler can use them.
+    # Add all seats as clickable markers that store ID/Status/Color
     customdata = list(zip(ids, statuses, colors))
     fig.add_trace(go.Scatter(
         x=xs, y=ys,
         mode="markers",
-        marker=dict(
+        marker=dict( 
             size=14,
             color=colors,
             line=dict(color="white", width=2),
         ),
         customdata=customdata,
-        # Hover tooltip — bold seat number on its own line, then the status
+        #Hovering Tool through Plotly
         hovertemplate=(
             "<b>Seat %{customdata[0]}</b><br>"
             "%{customdata[1]}"
-            "<extra></extra>"   # hides Plotly's default trace-name footer
+            "<extra></extra>"  
         ),
-        # Tint the tooltip background with each seat's status colour
+        
         hoverlabel=dict(
             bgcolor=colors,
             bordercolor="white",
@@ -275,23 +273,21 @@ def render_interactive_map(
         showlegend=False,
     ))
 
-    # Pre-mark the currently-selected seat so Plotly's selected/unselected
-    # styling kicks in across reruns (otherwise selection state would reset
-    # every time Streamlit redraws).
+    # Highlight Selected seat 
     if selected_seat_id is not None:
         try:
             sel_idx = ids.index(int(selected_seat_id))
-            fig.update_traces(selectedpoints=[sel_idx])
+            fig.update_traces(selectedpoints=[sel_idx]) 
         except ValueError:
             pass
 
-    # Visual difference between selected and unselected dots
+    #Makes selected bigger / brighter
     fig.update_traces(
         selected=dict(marker=dict(size=22, opacity=1.0)),
         unselected=dict(marker=dict(opacity=0.85)),
     )
 
-    # ── 4. Axes: hide them, set the image's coordinate space ──────────────
+    #Hide Axes 
     fig.update_xaxes(
         visible=False,
         range=[0, img_w],
@@ -299,8 +295,7 @@ def render_interactive_map(
     )
     fig.update_yaxes(
         visible=False,
-        # Image y goes top-down; Plotly's default is bottom-up. Inverting
-        # the range makes seat (x=10, y=10) appear in the upper-left.
+        # Inverting Y axis because Plotly is bottom-up
         range=[img_h, 0],
         scaleanchor="x",
         scaleratio=1,
@@ -310,20 +305,11 @@ def render_interactive_map(
         height=height,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        # dragmode "pan" gives click+drag panning on desktop AND
-        # one-finger panning on mobile. Combined with the
-        # `scrollZoom: True` config below, mobile users get
-        # two-finger pinch-to-zoom on the chart for free (Plotly's
-        # built-in gesture handler). Don't override `touch-action`
-        # on the chart from CSS — Plotly sets `touch-action: none`
-        # on its drag layer so it can read raw touch events; any
-        # `pinch-zoom` override would hand the pinch to the
-        # browser, which then refuses to do anything (Streamlit's
-        # viewport has `user-scalable=no`), and the gesture dies.
+        
         dragmode="pan",
     )
 
-    # ── 5. Render. on_select="rerun" delivers click events to Python ──────
+    # Render the Plotly chart inside Streamlit.
     event = st.plotly_chart(
         fig,
         key=key,
@@ -338,8 +324,8 @@ def render_interactive_map(
         },
     )
 
-    # ── 6. Read which seat (if any) the user just clicked ─────────────────
-    if not event:
+    # Reads clicked seat
+    if not event: #check if clicked
         return None
     selection = event.get("selection") if isinstance(event, dict) else None
     if not selection:
@@ -365,7 +351,11 @@ def render_interactive_map(
 # ---------------------------------------------------------------------------
 # Selection helpers
 # ---------------------------------------------------------------------------
-
+    """
+    Clears currently selected seat.
+    When the users logs out or the map resets
+    
+    """
 def clear_seat_selection(key: str = "library_map_chart") -> None:
     """Forget any stored selection (e.g. on logout)."""
     if key in st.session_state:
@@ -378,6 +368,6 @@ def clear_seat_selection(key: str = "library_map_chart") -> None:
             del st.query_params["seat"]
     except Exception:
         try:
-            st.experimental_set_query_params()  # type: ignore[attr-defined]
+            st.experimental_set_query_params()  
         except Exception:
             pass
