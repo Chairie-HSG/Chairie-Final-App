@@ -1,86 +1,5 @@
 import streamlit as st
-import streamlit.components.v1 as components
 from PIL import Image
-
-
-def prepare_back_camera():
-    """Bias `st.camera_input` toward the device's BACK (rear-facing)
-    camera instead of the front-facing selfie camera.
-
-    Background:
-    -----------
-    `st.camera_input` does NOT expose a `facingMode` parameter — the
-    browser picks the camera using the OS default, which on most
-    phones is the front camera. That's wrong for QR scanning: the QR
-    sticker is on the seat, in front of the user, not behind them.
-
-    Workaround:
-    -----------
-    We patch `navigator.mediaDevices.getUserMedia` on the parent
-    document before `st.camera_input` mounts. When `camera_input`
-    calls `getUserMedia({ video: true })` (or with any other video
-    constraint), the patched function rewrites the request to
-    include `facingMode: 'environment'`. The browser then prefers
-    the rear camera if one exists.
-
-    We use `facingMode: 'environment'` (a *preference*) rather than
-    `facingMode: { exact: 'environment' }` (a *strict requirement*)
-    so the camera still works on desktops / laptops that only have a
-    front-facing webcam — there, the browser ignores the preference
-    and uses the only camera available, instead of failing outright.
-
-    Idempotency:
-    ------------
-    Streamlit reruns the script on every interaction, so this
-    function may be called many times per session. The patch flag
-    `md._chairieBackCameraPatched` lives on the parent's
-    `navigator.mediaDevices` object (which is NOT reset across
-    reruns), so the override is applied exactly once per page load.
-
-    Call this BEFORE `st.camera_input(...)` in any flow that opens
-    the camera for QR scanning.
-    """
-    components.html(
-        """
-        <script>
-        (function () {
-          // The Streamlit script runs inside an iframe; the actual
-          // page (where camera_input lives) is the parent document.
-          const parent = window.parent;
-          if (!parent || !parent.navigator || !parent.navigator.mediaDevices) {
-            return;
-          }
-          const md = parent.navigator.mediaDevices;
-
-          // Already patched on this page? Bail out — don't stack
-          // wrappers, which would build up after each Streamlit rerun.
-          if (md._chairieBackCameraPatched) {
-            return;
-          }
-          md._chairieBackCameraPatched = true;
-
-          const orig = md.getUserMedia.bind(md);
-          md.getUserMedia = function (constraints) {
-            constraints = constraints || {};
-            // Three shapes camera_input might hand us:
-            //   1. { video: true }              → upgrade to object form
-            //   2. { video: undefined / null }  → same as (1)
-            //   3. { video: { ... } }           → respect existing keys
-            //                                     but inject facingMode
-            if (constraints.video === true || constraints.video == null) {
-              constraints.video = { facingMode: 'environment' };
-            } else if (typeof constraints.video === 'object') {
-              if (!constraints.video.facingMode) {
-                constraints.video.facingMode = 'environment';
-              }
-            }
-            return orig(constraints);
-          };
-        })();
-        </script>
-        """,
-        height=0,
-    )
 
 
 def decode_qr(image: Image.Image):
@@ -154,9 +73,6 @@ def show_checkin(token, expected_seat_id, expected_seat_code, check_in_fn):
 
     # Option 1: Camera QR scan
     st.markdown("**Option 1: Scan QR code**")
-    # Force the back/photo camera instead of the front/selfie camera
-    # — must run before the camera_input widget mounts.
-    prepare_back_camera()
     photo = st.camera_input("Point your camera at the QR code on the seat")
     #Camera_input opens device camera
 
