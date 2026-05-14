@@ -1,6 +1,7 @@
 """
 account_page.py
-Account tab for Chairie – shows profile info and current seat status.
+Account tab for Chairie – shows profile info, study statistics, and
+current seat status.
 """
 
 import streamlit as st
@@ -41,15 +42,32 @@ def _get_status(token):
         return {"success": False}
 
 
+def _get_study_stats(token):
+    """Pull weekly hours / total hours / session count from the
+    `study_sessions` table via streamlit_app.get_user_study_stats().
+
+    Note: the previous version of this file pulled study time from
+    `profiles.total_hours_studied`, but nothing in the codebase ever
+    writes to that column — hours always read as 0. The
+    `study_sessions` table is the actual source of truth, populated
+    by check_in_from_qr / release_current_seat in streamlit_app.py.
+    """
+    try:
+        from streamlit_app import get_user_study_stats
+        return get_user_study_stats(token)
+    except Exception:
+        return None
+
+
 def render_account_page(token):
     st.title("My Account")
 
     profile = _get_profile(token)
     status  = _get_status(token)
+    stats   = _get_study_stats(token)
 
     full_name = (profile or {}).get("full_name", "")
     gender    = (profile or {}).get("gender", "Prefer not to say")
-    hours     = (profile or {}).get("total_hours_studied", 0) or 0
     email     = st.session_state.get("username", "")
 
     # ── Avatar + name ─────────────────────────────────────────
@@ -58,17 +76,32 @@ def render_account_page(token):
     st.caption(email)
     st.divider()
 
-    # ── Stats ─────────────────────────────────────────────────
-    col1, col2 = st.columns(2)
-    col1.metric("Hours Studied", int(hours))
+    # ── Study statistics ──────────────────────────────────────
+    # Three cards: weekly hours, all-time hours, and session count.
+    # If get_user_study_stats fails or returns None (e.g. Supabase
+    # is unreachable), the cards render with zeros — same fallback
+    # as the original "Hours Studied" tile.
+    weekly_hours = (stats or {}).get("weekly_hours", 0)
+    total_hours  = (stats or {}).get("total_hours",  0)
+    sessions_n   = (stats or {}).get("sessions",     0)
 
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Hours this week",     f"{weekly_hours}h")
+    col2.metric("Total hours studied", f"{total_hours}h")
+    col3.metric("Study sessions",      sessions_n)
+
+    if not stats:
+        st.caption("No study sessions yet — check into a seat to "
+                   "start tracking your hours.")
+
+    # ── Current seat ──────────────────────────────────────────
     current_seat = "None"
     if status.get("success"):
         if status.get("checked_in_seat"):
             current_seat = status["checked_in_seat"]["code"] + " (checked in)"
         elif status.get("reserved_seat"):
             current_seat = status["reserved_seat"]["code"] + " (reserved)"
-    col2.metric("Current Seat", current_seat)
+    st.markdown(f"**Current seat:** {current_seat}")
     st.divider()
 
     # ── Edit profile ──────────────────────────────────────────
