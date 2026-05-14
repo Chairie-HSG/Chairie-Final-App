@@ -710,6 +710,15 @@ LUNCH_BREAK_MINUTES    = 60
 
 def _lunch_break_window_open():
     """True if the wall clock (Zurich) is currently in the claim window."""
+    # ── DEMO OVERRIDE (Settings page) ───────────────────────────────
+    # `_demo_lunch_window_force` is set by the Settings demo controls
+    # to True/False to force the window open or closed regardless of
+    # the actual wall clock. None (the default) falls through to the
+    # real time check. REMOVE THIS BLOCK WHEN DEMO PAGE IS REMOVED.
+    override = st.session_state.get("_demo_lunch_window_force")
+    if override is not None:
+        return bool(override)
+    # ── END DEMO OVERRIDE ───────────────────────────────────────────
     now = _zurich_now()
     return LUNCH_BREAK_START_HOUR <= now.hour < LUNCH_BREAK_END_HOUR
 
@@ -809,6 +818,64 @@ def start_lunch_break(token, seat_id):
         return {"success": False, "message": str(e)}
 
 
+# ═════════════════════════════════════════════════════════════
+# ███  DEMO BLOCK START  ███████████████████████████████████████
+# ═════════════════════════════════════════════════════════════
+# TEMPORARY demo controls used to exercise the lunch-break and
+# re-check-in features without waiting for the real time windows.
+# Visible to every logged-in user on the Settings page. Everything
+# inside this block (plus the demo override in _lunch_break_window_open
+# and the entire `settings_page()` body that's marked DEMO) should be
+# deleted before launch. Grep for "DEMO BLOCK" to find all the pieces.
+
+def demo_set_seat_expiry(token, minutes_from_now):
+    """Force the user's currently-occupied seat to expire in
+    `minutes_from_now` minutes. Used by the Settings demo page to
+    pop the seat into the re-check-in window (≤30 min remaining)
+    on demand, or to reset it back to a full 2-hour timer.
+    """
+    if not SUPABASE_OK:
+        return {"success": False, "message": "Supabase not configured."}
+    try:
+        email = _email_from_token(token)
+        if not email:
+            return {"success": False, "message": "Unauthorized"}
+
+        occupied = (
+            supabase.table("seats")
+            .select("*")
+            .eq("occupied_by", email)
+            .eq("status", "occupied")
+            .limit(1)
+            .execute()
+        )
+        if not occupied.data:
+            return {
+                "success": False,
+                "message": "You have no occupied seat to advance. "
+                           "Check into a seat first.",
+            }
+        seat = occupied.data[0]
+
+        new_until = _to_iso(_now() + timedelta(minutes=int(minutes_from_now)))
+        supabase.table("seats").update(
+            {"occupied_until": new_until}
+        ).eq("id", seat["id"]).execute()
+
+        return {
+            "success": True,
+            "message": f"Seat {seat['code']} now expires in "
+                       f"{int(minutes_from_now)} min.",
+            "occupied_until": new_until,
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+# ═════════════════════════════════════════════════════════════
+# ███  DEMO BLOCK END  █████████████████████████████████████████
+# ═════════════════════════════════════════════════════════════
+
+
 # ─────────────────────────────────────────────────────────────
 # AUTH STATE  (from auth.py)
 # ─────────────────────────────────────────────────────────────
@@ -853,6 +920,8 @@ def logout_user():
     # into the next user on the same browser.
     st.session_state.pop("lunch_break_active_until", None)
     st.session_state.pop("lunch_break_claimed_date", None)
+    # DEMO BLOCK: also clear any demo override left over on this browser.
+    st.session_state.pop("_demo_lunch_window_force", None)
     # Drop ?seat=… from the URL so a fresh session starts clean.
     try:
         clear_seat_selection()
@@ -2364,24 +2433,240 @@ def profile_page(token):
     render_account_page(token)
 
 # ─────────────────────────────────────────────────────────────
-# SETTINGS PAGE  (placeholder for now)
+# SETTINGS PAGE  (currently DEMO CONTROLS — temporary)
 # ─────────────────────────────────────────────────────────────
+# This whole function body is part of the DEMO BLOCK. When demos
+# are no longer needed, restore the placeholder shown at the very
+# bottom (commented out) and delete everything above it inside
+# settings_page(). Grep for "DEMO BLOCK" to find related code.
 def settings_page(token):
-    """Empty placeholder per the spec — to be fleshed out later."""
+    """DEMO controls — lets anyone trigger the lunch-break and
+    re-check-in flows without waiting for real time windows.
+    To be replaced with real settings (notifications, appearance,
+    account) before launch.
+    """
     _render_top_bar("Settings")
+
+    # ── Top banner: makes the temporary status obvious ──────────────
     st.markdown(
-        """
-        <div class="chairie-placeholder">
-          <div class="chairie-placeholder-icon">⚙</div>
-          <div class="chairie-placeholder-title">Settings</div>
-          <div class="chairie-placeholder-sub">
-            Notification preferences, appearance and account controls will
-            live here. Coming soon.
+        '<div class="chairie-alert chairie-alert-warning">'
+        '🛠️ <strong>Demo controls</strong> — these settings exist so '
+        'we can demonstrate the lunch-break and re-check-in features '
+        'on demand. They\'re visible to every logged-in user and will '
+        'be removed before launch.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ─────────────────────────────────────────────────────────────
+    # SECTION 1 · Lunch break window
+    # ─────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Lunch break window '
+        '<span class="hint">11:00–14:00 Zurich</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    # Snapshot of all the relevant state for the readout table.
+    real_now         = dt.now(ZURICH_TZ)
+    real_window_open = (LUNCH_BREAK_START_HOUR <= real_now.hour < LUNCH_BREAK_END_HOUR)
+    forced           = st.session_state.get("_demo_lunch_window_force")
+    state            = _lunch_break_state()
+
+    if forced is None:
+        override_label = "None (real time)"
+    elif forced:
+        override_label = "FORCE OPEN"
+    else:
+        override_label = "FORCE CLOSED"
+
+    effective_pill = "free" if state["window_open"] else "occupied"
+    effective_text = "OPEN" if state["window_open"] else "CLOSED"
+
+    st.markdown(
+        f"""
+        <div class="chairie-seat-detail">
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Current Zurich time</span>
+            <span class="chairie-seat-value">{real_now.strftime("%H:%M:%S")}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Real window status</span>
+            <span class="chairie-seat-value">
+              {"OPEN" if real_window_open else "CLOSED"} (based on wall clock)
+            </span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Override</span>
+            <span class="chairie-seat-value">{override_label}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Effective state</span>
+            <span class="chairie-status-pill {effective_pill}">{effective_text}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Claimed today?</span>
+            <span class="chairie-seat-value">
+              {"Yes" if state["claimed_today"] else "No"}
+            </span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Break currently active?</span>
+            <span class="chairie-seat-value">
+              {"Yes" if state["active"] else "No"}
+            </span>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # Override controls
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Force window OPEN", key="demo_lb_force_open",
+                     use_container_width=True):
+            st.session_state["_demo_lunch_window_force"] = True
+            st.rerun()
+    with c2:
+        if st.button("Force window CLOSED", key="demo_lb_force_closed",
+                     use_container_width=True):
+            st.session_state["_demo_lunch_window_force"] = False
+            st.rerun()
+    with c3:
+        if st.button("Use real time", key="demo_lb_use_real",
+                     use_container_width=True, type="secondary"):
+            st.session_state.pop("_demo_lunch_window_force", None)
+            st.rerun()
+
+    # Reset claim/active state so the same user can re-demo
+    if st.button("Reset today's break (clear claim + active state)",
+                 key="demo_lb_reset", use_container_width=True,
+                 type="secondary"):
+        st.session_state.pop("lunch_break_active_until", None)
+        st.session_state.pop("lunch_break_claimed_date", None)
+        st.success("Lunch break state cleared — you can claim again.")
+        st.rerun()
+
+    # ─────────────────────────────────────────────────────────────
+    # SECTION 2 · Seat expiry (re-check-in window)
+    # ─────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Seat expiry '
+        f'<span class="hint">re-check window = last {RECHECK_WINDOW_MINUTES} min'
+        f'</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    status_result = get_user_status(token)
+    seat = None
+    if status_result.get("success"):
+        seat = status_result.get("checked_in_seat")
+
+    if not seat:
+        st.markdown(
+            '<div class="chairie-empty-detail">'
+            'You need to be <strong>checked in</strong> to a seat to use '
+            'these controls. Head to the Map, reserve a seat, then '
+            'check in via QR.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        secs = seconds_left(seat["occupied_until"]) if seat.get("occupied_until") else 0
+        window_open = (0 < secs <= RECHECK_WINDOW_MINUTES * 60)
+        window_pill = "free" if window_open else "maintenance"
+        window_text = "OPEN" if window_open else "Not yet"
+
+        st.markdown(
+            f"""
+            <div class="chairie-seat-detail">
+              <div class="chairie-seat-row">
+                <span class="chairie-seat-label">Your seat</span>
+                <span class="chairie-seat-value">{seat['code']}</span>
+              </div>
+              <div class="chairie-seat-row">
+                <span class="chairie-seat-label">Currently expires in</span>
+                <span class="chairie-seat-value">
+                  {live_countdown_html(seat["occupied_until"])}
+                </span>
+              </div>
+              <div class="chairie-seat-row">
+                <span class="chairie-seat-label">Re-check window</span>
+                <span class="chairie-status-pill {window_pill}">{window_text}</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("Expire in 20 min (opens re-check)",
+                         key="demo_seat_20min", use_container_width=True):
+                result = demo_set_seat_expiry(token, 20)
+                if result.get("success"):
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(result["message"])
+        with b2:
+            if st.button("Expire in 2 min (near expiry)",
+                         key="demo_seat_2min", use_container_width=True):
+                result = demo_set_seat_expiry(token, 2)
+                if result.get("success"):
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(result["message"])
+        with b3:
+            if st.button(f"Reset to fresh {RECHECK_HOURS}-hour timer",
+                         key="demo_seat_reset", use_container_width=True,
+                         type="secondary"):
+                result = demo_set_seat_expiry(token, RECHECK_HOURS * 60)
+                if result.get("success"):
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(result["message"])
+
+    # ─────────────────────────────────────────────────────────────
+    # Future real settings would live below this divider
+    # ─────────────────────────────────────────────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Coming soon</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        """
+        <div class="chairie-placeholder">
+          <div class="chairie-placeholder-icon">⚙</div>
+          <div class="chairie-placeholder-title">Real settings</div>
+          <div class="chairie-placeholder-sub">
+            Notification preferences, appearance, and account controls
+            will live here once we ship. The demo controls above will
+            be removed at that point.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ── To restore the original Settings placeholder later, replace the
+#    entire settings_page body above with:
+#
+#        _render_top_bar("Settings")
+#        st.markdown(
+#            '<div class="chairie-placeholder">'
+#            '  <div class="chairie-placeholder-icon">⚙</div>'
+#            '  <div class="chairie-placeholder-title">Settings</div>'
+#            '  <div class="chairie-placeholder-sub">'
+#            '    Notification preferences, appearance and account '
+#            '    controls will live here. Coming soon.'
+#            '  </div>'
+#            '</div>',
+#            unsafe_allow_html=True,
+#        )
 
 
 # ─────────────────────────────────────────────────────────────
