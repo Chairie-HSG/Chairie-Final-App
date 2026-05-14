@@ -533,7 +533,7 @@ def check_in_from_qr(token, seat_id):
             "floor": seat["floor"],
             "started_at": _to_iso(_now()),
         }).execute()
-
+        st.write("DEBUG: study session inserted")
         return {
             "success": True,
             "message": f"Checked in to seat {seat['code']}.",
