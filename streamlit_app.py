@@ -241,6 +241,11 @@ if SUPABASE_URL and SUPABASE_KEY:
 # ─────────────────────────────────────────────────────────────
 RESERVATION_MINUTES = 10
 RECHECK_HOURS = 2
+# How early (before occupied_until expires) the re-check-in window opens.
+# Scanning your seat's QR within this window extends `occupied_until` by
+# another RECHECK_HOURS without starting a new study session. Scans
+# outside the window just return a friendly "already checked in" note.
+RECHECK_WINDOW_MINUTES = 30
 
 # All wall-clock display is in Switzerland's local timezone. Storage in
 # Supabase stays in UTC (good practice for ISO timestamps); we only
@@ -536,6 +541,102 @@ def check_in_from_qr(token, seat_id):
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
+
+
+def recheck_in_from_qr(token, seat_id):
+    """Extend the user's current check-in by another `RECHECK_HOURS`
+    via a QR re-scan of their own seat.
+
+    Differs from `check_in_from_qr` in three important ways:
+      1. Only works on a seat the user *already* occupies.
+      2. Only works inside the last `RECHECK_WINDOW_MINUTES` of the
+         current `occupied_until` — too-early scans are rejected with
+         a friendly "available in N min" message.
+      3. Does NOT create a new `study_sessions` row — the original
+         row's `started_at` stays put, so total study time is computed
+         correctly when the seat is eventually released.
+    """
+    if not SUPABASE_OK:
+        return {"success": False, "message": "Supabase not configured."}
+    try:
+        _expire_seats()
+        email = _email_from_token(token)
+        if not email:
+            return {"success": False, "message": "Unauthorized"}
+
+        seat_res = supabase.table("seats").select("*").eq("id", seat_id).limit(1).execute()
+        if not seat_res.data:
+            return {"success": False, "message": "Seat not found."}
+        seat = seat_res.data[0]
+
+        if seat.get("status") != "occupied" or seat.get("occupied_by") != email:
+            return {
+                "success": False,
+                "message": "You're not currently checked in to this seat.",
+            }
+
+        current_until = seat.get("occupied_until")
+        if not current_until:
+            return {"success": False, "message": "Seat has no expiration set."}
+
+        # Only allow extension inside the last RECHECK_WINDOW_MINUTES.
+        secs_remaining = seconds_left(current_until)
+        if secs_remaining > RECHECK_WINDOW_MINUTES * 60:
+            mins_until_open = (secs_remaining - RECHECK_WINDOW_MINUTES * 60) // 60
+            return {
+                "success": False,
+                "kind": "too_early",
+                "message": (
+                    f"Re-check in opens {RECHECK_WINDOW_MINUTES} min before your "
+                    f"time runs out. Available in {mins_until_open} min."
+                ),
+            }
+
+        new_until = _to_iso(_now() + timedelta(hours=RECHECK_HOURS))
+        supabase.table("seats").update(
+            {"occupied_until": new_until}
+        ).eq("id", seat_id).execute()
+
+        return {
+            "success": True,
+            "message": (
+                f"Re-checked in to seat {seat['code']} — your seat is "
+                f"yours for another {RECHECK_HOURS} hour(s)."
+            ),
+            "occupied_until": new_until,
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def _recheck_window_state(seat):
+    """Return whether the user's occupied seat is currently inside the
+    re-check-in window. Used by the UI to surface a contextual hint
+    in the My Seat panel and by `_resolve_scanned_code` to decide
+    whether a self-scan should extend or just acknowledge.
+
+    Returns a dict with:
+      - is_occupied_by_me:  bool
+      - window_open:        bool  — True if we're in the last
+                                    RECHECK_WINDOW_MINUTES of the
+                                    current `occupied_until`
+      - minutes_to_open:    int|None — minutes until window opens
+                                    (None once it's already open)
+    """
+    if not seat or seat.get("status") != "occupied" or not seat.get("occupied_by_me"):
+        return {"is_occupied_by_me": False, "window_open": False, "minutes_to_open": None}
+
+    until = seat.get("occupied_until")
+    if not until:
+        return {"is_occupied_by_me": True, "window_open": False, "minutes_to_open": None}
+
+    secs = seconds_left(until)
+    window_open = (0 < secs <= RECHECK_WINDOW_MINUTES * 60)
+    return {
+        "is_occupied_by_me": True,
+        "window_open":        window_open,
+        "minutes_to_open":    None if window_open else max(0, (secs - RECHECK_WINDOW_MINUTES * 60) // 60),
+    }
 
 
 def release_current_seat(token):
@@ -1209,6 +1310,23 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
     # Lunch-break sub-section (only renders content when checked-in)
     _render_lunch_break_block(seat, token, key_prefix=key_prefix)
 
+    # Re-check-in hint — shown only when the user is checked in, NOT
+    # currently on a lunch break (the break already extends the seat),
+    # and we're inside the last RECHECK_WINDOW_MINUTES of occupied_until.
+    # Surfacing this in the My Seat panel pairs with the QR scan card
+    # below: the user sees "scan to extend" right next to the camera
+    # button, so the action is obvious.
+    if is_occupied and not _lunch_break_state()["active"]:
+        rs = _recheck_window_state(seat)
+        if rs["window_open"]:
+            st.markdown(
+                f'<div class="chairie-lunch-note open">'
+                f'⏰ <strong>Re-check in available</strong> — scan your seat\'s '
+                f'QR code to extend for another {RECHECK_HOURS} hour(s).'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
     # Primary action: release a checked-in seat, or cancel a reservation
     if is_occupied:
         if st.button(
@@ -1856,8 +1974,39 @@ def _resolve_scanned_code(token, seats, scanned_code):
             "message": f"Seat code '{scanned_code}' is not in our database.",
         }
 
-    # Already checked in here.
+    # Self-scan: either re-check in (if inside the window) or just
+    # acknowledge with a helpful "comes back in N min" note.
     if seat.get("occupied_by_me"):
+        rs = _recheck_window_state(seat)
+        if rs["window_open"]:
+            recheck = recheck_in_from_qr(token, seat["id"])
+            if recheck.get("success"):
+                return {
+                    "kind": "ok",
+                    "message": (
+                        f"✅ Re-checked in at seat {seat['code']} — extended "
+                        f"for another {RECHECK_HOURS} hour(s)."
+                    ),
+                }
+            # Re-check failed (e.g. raced past the window edge) — fall
+            # through to a soft acknowledgement so the user isn't shown
+            # a scary error for what is, essentially, a no-op.
+            return {
+                "kind": "ok",
+                "message": recheck.get(
+                    "message",
+                    f"You're already checked in at seat {seat['code']}.",
+                ),
+            }
+        mins = rs.get("minutes_to_open")
+        if mins and mins > 0:
+            return {
+                "kind": "ok",
+                "message": (
+                    f"You're already checked in at seat {seat['code']}. "
+                    f"Re-check in opens in {mins} min."
+                ),
+            }
         return {
             "kind": "ok",
             "message": f"You're already checked in at seat {seat['code']}.",
