@@ -84,11 +84,13 @@ def render_account_page(token):
     weekly_hours = (stats or {}).get("weekly_hours", 0)
     total_hours  = (stats or {}).get("total_hours",  0)
     sessions_n   = (stats or {}).get("sessions",     0)
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Hours this week",     f"{weekly_hours}h")
-    col2.metric("Total hours studied", f"{total_hours}h")
-    col3.metric("Study sessions",      sessions_n)
+    
+    weekly_minutes = round(weekly_hours * 60)
+    total_minutes = round(total_hours * 60)
+    
+    col1.metric("Minutes this week", f"{weekly_minutes} min")
+    col2.metric("Total minutes studied", f"{total_minutes} min")
+    col3.metric("Study sessions", sessions_n)
 
     if not stats:
         st.caption("No study sessions yet — check into a seat to "
