@@ -648,22 +648,10 @@ def start_lunch_break(token, seat_id):
         return {"success": False, "message": str(e)}
 
 
-# ═════════════════════════════════════════════════════════════
-# ███  DEMO BLOCK START  ███████████████████████████████████████
-# ═════════════════════════════════════════════════════════════
-# TEMPORARY demo controls used to exercise the lunch-break and
-# re-check-in features without waiting for the real time windows.
-# Visible to every logged-in user on the Settings page. Everything
-# inside this block (plus the demo override in _lunch_break_window_open
-# and the entire `settings_page()` body that's marked DEMO) should be
-# deleted before launch. Grep for "DEMO BLOCK" to find all the pieces.
+# Demo section for us testing the lunch break function
 
 def demo_set_seat_expiry(token, minutes_from_now):
-    """Force the user's currently-occupied seat to expire in
-    `minutes_from_now` minutes. Used by the Settings demo page to
-    pop the seat into the re-check-in window (≤30 min remaining)
-    on demand, or to reset it back to a full 2-hour timer.
-    """
+   
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
     try:
@@ -701,28 +689,8 @@ def demo_set_seat_expiry(token, minutes_from_now):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-# ═════════════════════════════════════════════════════════════
-# ███  DEMO BLOCK END  █████████████████████████████████████████
-# ═════════════════════════════════════════════════════════════
+# FLOOR DATA + STATS, this is used to show stats of how many seats are taken per floor etc 
 
-
-# ─────────────────────────────────────────────────────────────
-# FLOOR METADATA + AGGREGATE STATS
-# ─────────────────────────────────────────────────────────────
-# Floor metadata used by every page that needs to show per-floor
-# numbers (landing-page stat cards, map-page filter, etc.). The
-# "matches" set is what `_seat_belongs_to_floor` checks against,
-# so Supabase rows can store floor as int 0/1, string "0"/"1",
-# "Ground", "Ground Floor", or "Floor 1" — anything reasonable.
-# NOTE on the floor convention used in Supabase
-# ─────────────────────────────────────────────
-# The `seats.floor` column stores an integer:
-#     1  →  Library Ground Floor   (street level)
-#     2  →  Library Upper Floor    (one above)
-# This is the "elevator-button" convention — floor 1 is the lobby.
-# `_seat_belongs_to_floor` lowercases and string-coerces the raw value
-# before checking it against the `matches` set below, so int 1, str "1",
-# and any human-friendly variant ("ground", "Ground Floor", …) all work.
 FLOOR_META = {
     "Ground Floor": {
         "display":  "Library Ground Floor",
@@ -749,22 +717,11 @@ FLOOR_META = {
     },
 }
 
-
+"""
+    Checks whether a seat belongs to a selected floor.
+"""
 def _seat_belongs_to_floor(seat, floor_choice):
-    """Return True if `seat` lives on the floor named by `floor_choice`.
-
-    Robust to whatever the Supabase row stores in `floor`:
-      - int 0 / 1
-      - str "0" / "1"
-      - str "Ground" / "Ground Floor" / "Floor 1" / "Upper"
-    Falls back to False on missing / unrecognized floor values.
-
-    NOTE: this replaces the previous brittle comparison
-        str(s.get("floor", "")) == ("0" if floor_choice == "Ground Floor" else "1")
-    which failed to filter when Supabase stored the floor as anything
-    other than the bare digits "0" / "1" — and was the root of the
-    "ground-floor count shows up on the upper-floor map" bug.
-    """
+  
     meta = FLOOR_META.get(floor_choice)
     if not meta:
         return False
@@ -775,29 +732,11 @@ def _seat_belongs_to_floor(seat, floor_choice):
 
 
 def _compute_floor_stats(seats, floor_choice):
-    """Aggregate counts for one floor: total/free/reserved/occupied.
 
-    Returns a dict the landing page + map page can both use:
-        {
-          "total":    <int>,
-          "free":     <int>,
-          "reserved": <int>,
-          "occupied": <int>,
-          "taken":    <int>,    # reserved + occupied
-          "pct_taken": <float>,  # 0.0–1.0
-          "availability": "open" | "busy" | "full",
-        }
-    If Supabase has no rows for this floor we fall back to
-    FLOOR_META[...]["capacity"] for `total` so the progress bar
-    still has a sensible denominator (and `free` is treated as 0).
-    """
     rows     = [s for s in seats if _seat_belongs_to_floor(s, floor_choice)]
     capacity = FLOOR_META[floor_choice]["capacity"]
     matched  = len(rows)
-    # ALWAYS use the configured capacity as the denominator, even if we
-    # matched more rows than expected (e.g. seeded test data). Otherwise
-    # the upper floor was showing "2 / 2" when only 2 test seats existed,
-    # instead of "2 / 296" against its real capacity.
+
     total    = max(capacity, matched)
     free     = sum(1 for s in rows if s.get("status") == "free")
     reserved = sum(1 for s in rows if s.get("status") == "reserved")
@@ -823,18 +762,12 @@ def _compute_floor_stats(seats, floor_choice):
     }
 
 
-# ─────────────────────────────────────────────────────────────
-# ML OCCUPANCY FORECAST  +  HISTORICAL SNAPSHOTS
-# ─────────────────────────────────────────────────────────────
+# Machine Learning Forecast, for this part we got a bit of help from Claude AI, as this was a bit difficult for us to wrap our head around
+"""
+    Predicts occupancy by hour for one floor.
+"""
 def _ml_forecast_series(floor_choice):
-    """Predict typical hourly occupancy (08:00–21:00) for the given
-    floor using a RandomForestRegressor trained on past snapshots.
 
-    Returns a list of (hour, occupied_fraction) tuples, where each
-    fraction is clamped to [0.0, 1.0]. Returns None if there isn't
-    enough history yet (< 20 snapshots) or if the ML stack isn't
-    available — callers should render an "insufficient data" hint.
-    """
     try:
         import pandas as pd
         from sklearn.ensemble import RandomForestRegressor
@@ -884,9 +817,10 @@ def _ml_forecast_series(floor_choice):
 
 
 def save_real_occupancy_snapshot():
-    """
-    Saves the current real seat occupancy into occupancy_snapshots.
-    This is what gives the ML model real historical data over time.
+     """
+    Saves the current seat occupancy into the historical snapshot table.
+
+    These snapshots become the training data for the ML forecast. So at first it will use fake data and overtime start using real user data.
     """
     if not SUPABASE_OK:
         return
@@ -924,13 +858,15 @@ def save_real_occupancy_snapshot():
         pass
 
 
-# ─────────────────────────────────────────────────────────────
-# USER STUDY STATISTICS
-# ─────────────────────────────────────────────────────────────
+# Personal Profile Data stats, that are displayed in the profile section
+ """
+    Calculates study statistics for the logged-in user.
+
+    It reads completed study sessions and returns weekly hours,
+    total hours, and number of sessions.
+"""
 def get_user_study_stats(token):
-    """
-    Returns study statistics for the logged-in user.
-    """
+
     try:
         email = _email_from_token(token)
 
@@ -978,29 +914,16 @@ def get_user_study_stats(token):
         return None
 
 
-# ─────────────────────────────────────────────────────────────
-# QR-SCAN RESOLUTION  (pure decision logic — UI calls this)
-# ─────────────────────────────────────────────────────────────
-# The original qr_code.show_checkin validates a scanned code against
-# an EXPECTED reservation. The new flow doesn't do that — the user
-# can scan any seat at any time, and we decide what happens based on
-# the scanned seat's live status. The UI in streamlit_app.py drives
-# the camera; this function decides what the result should mean.
+# QR-SCAN RESOLUTION 
+ """
+    Decides what should happen when a QR code is scanned.
+
+    It does not open the camera itself automatically.
+    It only receives the scanned seat code and decides whether the user
+    can check in, re-check in, or should see an error message.
+"""
 def _resolve_scanned_code(token, seats, scanned_code):
-    """Look up `scanned_code` in `seats` and decide what to do.
 
-    Returns a small dict the UI can render directly:
-        {"kind": "ok" | "occupied" | "reserved" | "error",
-         "message": str}
-
-    Outcomes:
-      • Free seat            → check user in, return "ok"
-      • The user's own seat  → "ok" ("Successfully checked in" or
-                                "Already checked in")
-      • Occupied by someone  → "occupied" with remaining time
-      • Reserved by someone  → "reserved" with remaining time
-      • Code not in DB       → "error"
-    """
     code_norm = (scanned_code or "").strip().lower()
     if not code_norm:
         return {"kind": "error", "message": "No seat code found in that QR."}
