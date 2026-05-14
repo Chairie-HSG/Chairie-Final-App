@@ -1151,6 +1151,35 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
         unsafe_allow_html=True,
     )
 
+    # Build the live-countdown row. For OCCUPIED seats it shows the
+    # re-check-in deadline (occupied_until). For RESERVED it shows the
+    # 10-min check-in window (reserved_until). When the user is on a
+    # lunch break, occupied_until has been bumped forward by 60 min,
+    # which would make the seat-level countdown duplicate the lunch
+    # break block's countdown — so we suppress it in that case and
+    # let the lunch break block carry the timer.
+    countdown_row_html = ""
+    on_lunch_break = is_occupied and _lunch_break_state()["active"]
+    if not on_lunch_break:
+        if is_occupied and seat.get("occupied_until"):
+            countdown_row_html = (
+                '<div class="chairie-seat-row">'
+                f'<span class="chairie-seat-label">Re-check in within</span>'
+                f'<span class="chairie-seat-value">'
+                f'{live_countdown_html(seat["occupied_until"])}'
+                f'</span>'
+                '</div>'
+            )
+        elif is_reserved and seat.get("reserved_until"):
+            countdown_row_html = (
+                '<div class="chairie-seat-row">'
+                f'<span class="chairie-seat-label">Check in within</span>'
+                f'<span class="chairie-seat-value">'
+                f'{live_countdown_html(seat["reserved_until"])}'
+                f'</span>'
+                '</div>'
+            )
+
     status_class = (status or "maintenance").lower()
     st.markdown(
         f"""
@@ -1171,6 +1200,7 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
             <span class="chairie-seat-label">Status</span>
             <span class="chairie-status-pill {status_class}">{status}</span>
           </div>
+          {countdown_row_html}
         </div>
         """,
         unsafe_allow_html=True,
