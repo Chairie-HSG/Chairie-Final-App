@@ -1,16 +1,30 @@
 <!--
     app_styles.html
     ─────────────────────────────────────────────────────────────
-    Global visual shell for the main (post-login) part of Chairie.
+    This file controls the global design of the main Chairie app after the user has logged in.
+
+    It is loaded into Streamlit with:
+    st.markdown(..., unsafe_allow_html=True)
 
     Refreshed with the Chairie brand palette:
       #4A7C2D  forest green   → primary brand, CTAs, "free"
       #E30613  Swiss red      → "occupied", urgent warnings
       #F2C46D  warm honey     → secondary accent, "reserved", soft panels
 
-    Used by every post-login page: landing, map, profile, settings.
-    Loaded once at the top of main_app() via
-    st.markdown(..., unsafe_allow_html=True).
+    This file mainly styles:
+    - the page background
+    - the sidebar navigation (including collapse/expand controls)
+    - the top bar (sticky at the top of the page)
+    - the landing page (hero section + floor stat cards + KPI strip)
+    - cards and statistics
+    - the map page (toolbar, legend, seat detail panel)
+    - buttons, alerts, selectboxes and Plotly charts
+    - the support footer
+    - live countdown timers and custom alert boxes
+
+    It also includes a JavaScript block at the bottom that:
+    - enables pinch-zoom on Plotly charts on mobile devices
+    - ticks the live countdown timers every second
 -->
 <style>
   /* ─────────────────────────────────────────────────────────────
@@ -37,39 +51,43 @@
     }
   }
 
-  :root {
+  :root { /*used to create global variables, meaning it applie these styles to the whole HTML document*/
+    /* Global CSS variables.
+    These variables store colors, shadows and border-radius values.
+    We define the colors once here and reuse it later with var(...)
+    */
     /* Brand palette (the three official colors) */
-    --chairie-green:        #4A7C2D;
-    --chairie-green-hover:  #3d6724;
-    --chairie-green-soft:   #e6efd9;   /* tinted bg for green elements */
+    --chairie-green:        #4A7C2D; /*Main green used for brand, buttons, free seats*/
+    --chairie-green-hover:  #3d6724; /*Darker green used when hovering over green buttons*/
+    --chairie-green-soft:   #e6efd9;   /* Light green background for soft highlights */
 
-    --chairie-red:          #E30613;
-    --chairie-red-hover:    #b8050f;
-    --chairie-red-soft:     #fde2e4;
+    --chairie-red:          #E30613; /*Red used for occupied seats and warnings*/
+    --chairie-red-hover:    #b8050f; /*Darker red used on hover*/
+    --chairie-red-soft:     #fde2e4; /*Light red background for warning-style elements*/
 
-    --chairie-honey:        #F2C46D;
-    --chairie-honey-hover:  #e5b150;
-    --chairie-honey-soft:   #fdf3dc;
+    --chairie-honey:        #F2C46D; /*Yellow used for reserved seats*/
+    --chairie-honey-hover:  #e5b150; /* Darker yellow used on hover*/
+    --chairie-honey-soft:   #fdf3dc; /*lighter yellow*/
 
-    /* Status colours (mapped to the brand palette) */
+    /* Seat Status colours (mapped to the brand palette) */
     --status-free:          var(--chairie-green);
     --status-reserved:      var(--chairie-honey);
     --status-occupied:      var(--chairie-red);
     --status-maintenance:   #9ca3af;
 
-    /* Neutrals — warm off-white background so the green/red pop */
-    --bg-page:              #FBF8F1;
-    --bg-card:              #ffffff;
-    --bg-subtle:            #f4f1e8;
+    /* Neutral background and text colors — warm off-white so the green/red pop */
+    --bg-page:              #FBF8F1; /*Main app background*/
+    --bg-card:              #ffffff; /*Card background*/
+    --bg-subtle:            #f4f1e8; /*Soft beige background*/
 
     --border-soft:          #e8e3d5;
     --border-strong:        #d6cfbb;
 
-    --text-primary:         #1f2937;
+    --text-primary:         #1f2937; /*Setting main text color*/
     --text-secondary:       #4b5563;
     --text-tertiary:        #9ca3af;
 
-    /* Elevation */
+    /* Shadow styles for depth, 0 = horizontal offset, 1px = shadow moves 1 pixel downward, 2px = how blurry/soft the shadow is, rgba = color of the shadow */
     --shadow-xs:  0 1px 2px rgba(31, 41, 55, 0.04);
     --shadow-sm:  0 1px 3px rgba(31, 41, 55, 0.06), 0 1px 2px rgba(31, 41, 55, 0.04);
     --shadow-md:  0 4px 12px rgba(31, 41, 55, 0.07), 0 2px 4px rgba(31, 41, 55, 0.04);
@@ -84,20 +102,21 @@
   }
 
   /* ────────────────────────────────────────────────────────────
-     Page-level
+     Page-level styling
+     This controls the overall app background, font and default text color
      ────────────────────────────────────────────────────────────*/
   .stApp {
     background-color: var(--bg-page);
-    background-image:
+    background-image: /*adds decorative background graphics on top of background color*/
       radial-gradient(circle at 15% 0%, rgba(242, 196, 109, 0.10) 0%, transparent 50%),
       radial-gradient(circle at 85% 100%, rgba(74, 124, 45, 0.06) 0%, transparent 55%);
-    background-attachment: fixed;
+    background-attachment: fixed; /*keeps background fixed while scrolling*/
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI",
                  Roboto, "Helvetica Neue", Arial, sans-serif;
     color: var(--text-primary);
   }
 
-  /* Hide Streamlit's default chrome */
+  /* Hide Streamlit's default menu and footer */
   #MainMenu       { visibility: hidden; }
   footer          { visibility: hidden; }
 
@@ -125,7 +144,7 @@
      where the sidebar's expand chevron lives. Just blend its
      background into the page so it doesn't visually clash. */
   header[data-testid="stHeader"] {
-    background: transparent !important;
+    background: transparent !important; /*!important = forces this style to win over other styles*/
   }
 
   /* Defensive: force the sidebar's expand control to stay visible.
@@ -140,13 +159,11 @@
     z-index: 999 !important;
   }
 
-  /* Constrain the main column on very wide screens. We leave the
-     default top padding alone — Streamlit's header already supplies
+  /* Limits the width of main content area on large screens.
+     We leave the default top padding alone — Streamlit's header already supplies
      the visual top spacing, so adding more here just causes the
-     "cropping" look the user reported. The 1rem top padding gives
-     a small gap below Streamlit's own header so the chairie bar
-     sits just under it, instead of ~6rem (Streamlit's default)
-     which leaves a big empty band. */
+     "cropping" look. The 1rem top padding gives a small gap below
+     Streamlit's own header so the chairie bar sits just under it. */
   [data-testid="stMainBlockContainer"],
   .main .block-container {
     max-width:        1400px;
@@ -168,7 +185,8 @@
   }
 
   /* ────────────────────────────────────────────────────────────
-     Sidebar navigation (Streamlit's built-in sidebar)
+     Sidebar navigation
+     This styles Streamlit's sidebar and the navigation buttons inside it
      ────────────────────────────────────────────────────────────*/
   section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #ffffff 0%, var(--bg-subtle) 100%);
@@ -230,10 +248,10 @@
   }
 
   .chairie-sidebar-brand {
-    display: flex;
+    display: flex; /*flex means arrange elements next to eachother, centered, spaced evenly and vertically aligned*/
     align-items: center;
-    gap: 12px;
-    padding: 4px 4px 22px 4px;
+    gap: 12px; /*space between flex items*/
+    padding: 4px 4px 22px 4px; /*padding order: top, right, bottom, left*/
     border-bottom: 1px solid var(--border-soft);
     margin-bottom: 18px;
   }
@@ -243,14 +261,14 @@
     border-radius: 10px;
     background: var(--chairie-green);
     color: white;
-    display: inline-flex;
+    display: inline-flex; /*inline element (it can sit next to other elements) with flexbox "powers" (you can easily center what is inside)*/
     align-items: center;
-    justify-content: center;
+    justify-content: center; /*aligns the element perfectly in the middle*/
     font-size: 18px;
     font-weight: 800;
     box-shadow: var(--shadow-sm);
   }
-  .chairie-sidebar-brand-text {
+  .chairie-sidebar-brand-text { /*Places brand name and subtitle below eachother*/
     display: flex;
     flex-direction: column;
     line-height: 1.15;
@@ -261,7 +279,7 @@
     color: var(--chairie-green);
     letter-spacing: -0.01em;
   }
-  .chairie-sidebar-brand-sub {
+  .chairie-sidebar-brand-sub { /*styles small subtitle below brand name*/
     font-size: 11px;
     color: var(--text-tertiary);
     font-weight: 500;
@@ -269,17 +287,17 @@
     text-transform: uppercase;
   }
 
-  .chairie-nav-label {
+  .chairie-nav-label { /*styles small labels such as "Navigation" above sidebar buttons*/
     font-size: 10px;
     font-weight: 700;
     color: var(--text-tertiary);
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    margin: 6px 4px 10px 4px;
+    margin: 6px 4px 10px 4px; /*space outside the box*/
   }
 
-  /* Style sidebar buttons as nav items */
-  section[data-testid="stSidebar"] .stButton > button {
+  /* Style sidebar buttons so they look like navigation items */
+  section[data-testid="stSidebar"] .stButton > button { /*selecting only buttons in the sidebar not all buttons in the whole app*/
     width: 100% !important;
     background: transparent !important;
     color: var(--text-secondary) !important;
@@ -290,30 +308,32 @@
     padding: 10px 14px !important;
     margin-bottom: 4px !important;
     box-shadow: none !important;
-    justify-content: flex-start !important;
+    justify-content: flex-start !important; /*pushes the button content to the left*/
   }
-  section[data-testid="stSidebar"] .stButton > button:hover {
+  section[data-testid="stSidebar"] .stButton > button:hover { /*Applies when the mouse is over a sidebar button*/
     background: var(--chairie-green-soft) !important;
     color: var(--chairie-green) !important;
     border-color: transparent !important;
     box-shadow: none !important;
   }
-  /* Active nav item — marked via type="primary" in the Python code */
+  /* Styles the active navigation button — marked via type="primary" in the Python code */
   section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
     background: var(--chairie-green) !important;
     color: #ffffff !important;
     border-color: var(--chairie-green) !important;
     box-shadow: var(--shadow-sm) !important;
   }
-  section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+  section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover { /*darkents the active navigation button on hover*/
     background: var(--chairie-green-hover) !important;
     border-color: var(--chairie-green-hover) !important;
   }
 
   /* ────────────────────────────────────────────────────────────
-     Top bar (rendered on every post-login page)
+     Top bar
+     This styles the top navigation/header area shown after login
+     (rendered on every post-login page)
      ────────────────────────────────────────────────────────────*/
-  .chairie-topbar {
+  .chairie-topbar { /*This creates a white card-like top bar*/
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -324,12 +344,12 @@
     box-shadow: var(--shadow-xs);
     margin-bottom: 22px;
   }
-  .chairie-topbar-left {
+  .chairie-topbar-left { /*Aligns the brand and page label horizontally*/
     display: inline-flex;
     align-items: center;
     gap: 14px;
   }
-  .chairie-brand {
+  .chairie-brand { /*Styles the Chairie brand name in the top bar*/
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -338,7 +358,7 @@
     color: var(--chairie-green);
     letter-spacing: -0.01em;
   }
-  .chairie-brand-mark {
+  .chairie-brand-mark { /*Styles the small brand icon in the top bar*/
     width: 28px;
     height: 28px;
     border-radius: 8px;
@@ -350,7 +370,7 @@
     font-size: 14px;
     font-weight: 800;
   }
-  .chairie-page-label {
+  .chairie-page-label { /*Styles the small page name next to the brand*/
     font-size: 12px;
     color: var(--text-tertiary);
     font-weight: 600;
@@ -360,11 +380,9 @@
     border-left: 1px solid var(--border-soft);
   }
 
-  /* The whole top bar is rendered as st.container(key="chairie_topbar"),
-     which Streamlit wraps in a div with class "st-key-chairie_topbar".
-     This lets us style the bar like a card AND scope button overrides
-     so they only affect the email pill + logout button.
-     STICKY: position: sticky + top: 0.5rem pins the bar near the top
+  /* Streamlit gives containers a class based on their key.
+     This styles the container with key="chairie_topbar" as a card.
+     STICKY: position: sticky + top pins the bar near the top
      of the viewport (with a small gap so it isn't visually cropped
      against the viewport edge) as the user scrolls. z-index keeps it
      above scrolling content; the solid background prevents bleed-through. */
@@ -392,9 +410,9 @@
     justify-content: flex-end;
     gap: 8px;
   }
-  /* The email pill is a real Streamlit button — restyled to look
-     like a soft chip with a green dot rather than a primary CTA. */
-  .st-key-chairie_topbar_right .stButton > button {
+  /* Styles the email button like a soft user pill (a soft chip with a green dot
+     rather than a primary CTA) */
+  .st-key-chairie_topbar_right .stButton > button { /*Selects button in the top-right area*/
     background: var(--bg-subtle) !important;
     color: var(--text-secondary) !important;
     border: 1px solid var(--border-soft) !important;
@@ -403,30 +421,30 @@
     font-size: 13px !important;
     font-weight: 500 !important;
     box-shadow: none !important;
-    position: relative;
-    height: auto !important;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
+    position: relative; /*button becomes reference box for the green dot that is placed inside the button*/
+    height: auto !important; /*adjusting naturally to its content and padding*/
+    white-space: nowrap; /*doesn't break email into multiple lines*/
+    text-overflow: ellipsis; /*if email is too long, it gets shortened with ...*/
+    overflow: hidden; /*hides the part of the email that doesn't fit inside the button*/
   }
-  .st-key-chairie_topbar_right .stButton > button::before {
-    content: "";
-    position: absolute;
+  .st-key-chairie_topbar_right .stButton > button::before { /*adds small green status dot inside the email pill*/
+    content: ""; /*creates a "fake" element*/
+    position: absolute; /*let's us position the element manually*/
     left: 12px;
     top: 50%;
-    transform: translateY(-50%);
+    transform: translateY(-50%); /*moves the dot upward by half of its own height*/
     width: 7px;
     height: 7px;
     border-radius: 50%;
     background: var(--chairie-green);
   }
-  .st-key-chairie_topbar_right .stButton > button:hover {
+  .st-key-chairie_topbar_right .stButton > button:hover { /*Changes the email pill when hovered*/
     background: var(--chairie-green-soft) !important;
     color: var(--chairie-green) !important;
     border-color: var(--chairie-green-soft) !important;
   }
   /* The logout button is marked type="secondary" in Python,
-     so we target that kind for red styling. */
+     so we style the logout button in red */
   .st-key-chairie_topbar_right .stButton > button[kind="secondary"] {
     background: #ffffff !important;
     color: var(--chairie-red) !important;
@@ -435,19 +453,20 @@
     padding: 6px 16px !important;
     font-weight: 600 !important;
   }
-  .st-key-chairie_topbar_right .stButton > button[kind="secondary"]:hover {
+  .st-key-chairie_topbar_right .stButton > button[kind="secondary"]:hover { /*making the button feel interactive, by filling it out red when mouse hovers over it*/
     background: var(--chairie-red) !important;
     color: #ffffff !important;
     border-color: var(--chairie-red) !important;
   }
   .st-key-chairie_topbar_right .stButton > button[kind="secondary"]::before {
-    display: none;
+    display: none; /*removing the green dot from the logout button, which we only want for the email button*/
   }
 
   /* ────────────────────────────────────────────────────────────
-     Landing page — hero
+     Landing page ("hero section")
+     This styles the large green introduction section on the landing page.
      ────────────────────────────────────────────────────────────*/
-  .chairie-hero {
+  .chairie-hero { /*creates the large green hero card*/
     position: relative;
     background: linear-gradient(135deg, var(--chairie-green) 0%, #3d6724 100%);
     border-radius: var(--radius-xl);
@@ -457,7 +476,7 @@
     overflow: hidden;
     box-shadow: var(--shadow-md);
   }
-  /* Decorative honey-yellow blob in the corner */
+  /* Adds decorative honey-colored blurry circle */
   .chairie-hero::after {
     content: "";
     position: absolute;
@@ -467,11 +486,11 @@
     height: 240px;
     border-radius: 50%;
     background: var(--chairie-honey);
-    opacity: 0.35;
+    opacity: 0.35; /*opacity is how transparent something is*/
     filter: blur(20px);
-    pointer-events: none;
+    pointer-events: none; /*mouse should ignore this element*/
   }
-  .chairie-hero::before {
+  .chairie-hero::before { /*Adds decorative red blurry circle*/
     content: "";
     position: absolute;
     right: 60px;
@@ -484,9 +503,9 @@
     filter: blur(28px);
     pointer-events: none;
   }
-  .chairie-hero-eyebrow {
+  .chairie-hero-eyebrow { /*Styles small uppercase text above the slogan*/
     position: relative;
-    z-index: 1;
+    z-index: 1; /*z-index to make the text appear in front of decorative circles*/
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.14em;
@@ -494,7 +513,7 @@
     color: var(--chairie-honey);
     margin-bottom: 12px;
   }
-  .chairie-hero-slogan {
+  .chairie-hero-slogan { /*styles the main large hero slogan*/
     position: relative;
     z-index: 1;
     font-size: 44px;
@@ -504,7 +523,7 @@
     margin-bottom: 12px;
     max-width: 720px;
   }
-  .chairie-hero-sub {
+  .chairie-hero-sub { /*styles smaller description text under slogan*/
     position: relative;
     z-index: 1;
     font-size: 16px;
@@ -542,8 +561,9 @@
 
   /* ────────────────────────────────────────────────────────────
      Landing page — stat cards (one per floor)
+     These cards show the statistics for each floor
      ────────────────────────────────────────────────────────────*/
-  .chairie-stat-card {
+  .chairie-stat-card { /*Styles each floor statistics card*/
     background: var(--bg-card);
     border: 1px solid var(--border-soft);
     border-radius: var(--radius-lg);
@@ -551,16 +571,16 @@
     box-shadow: var(--shadow-sm);
     height: 100%;
     box-sizing: border-box;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    transition: transform 0.15s ease, box-shadow 0.15s ease; /*ensures smooth movement and transition when it moves*/
   }
   .chairie-stat-card:hover {
-    transform: translateY(-2px);
+    transform: translateY(-2px); /*moves element 2 pixels upward*/
     box-shadow: var(--shadow-md);
   }
-  .chairie-stat-card-header {
-    display: flex;
+  .chairie-stat-card-header { /*styles top row inside the stat card*/
+    display: flex; /*puts the items in the header next to each other horizontally*/
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: flex-start; /*aligns the items at the top of the row*/
     margin-bottom: 14px;
   }
   .chairie-stat-card-title {
@@ -569,13 +589,13 @@
     color: var(--text-primary);
     letter-spacing: -0.01em;
   }
-  .chairie-stat-card-sub {
+  .chairie-stat-card-sub { /*styles the smaller subtitle under the title*/
     font-size: 12px;
     color: var(--text-tertiary);
     margin-top: 2px;
   }
 
-  /* Open / Busy / Full pill in the corner of each stat card */
+  /* Base Styles for Open / Busy / Full pill in the corner of each stat card */
   .chairie-availability-pill {
     display: inline-block;
     padding: 4px 12px;
@@ -585,24 +605,25 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
+  /*different colors for different availability states*/
   .chairie-availability-pill.open  { background: var(--chairie-green-soft); color: var(--chairie-green); }
   .chairie-availability-pill.busy  { background: var(--chairie-honey-soft); color: #8a6320; }
   .chairie-availability-pill.full  { background: var(--chairie-red-soft); color: var(--chairie-red); }
 
-  .chairie-stat-bignum {
+  .chairie-stat-bignum { /*styles the large numbers inside a statistics card*/
     font-size: 36px;
     font-weight: 800;
     color: var(--text-primary);
     letter-spacing: -0.02em;
     line-height: 1;
   }
-  .chairie-stat-bignum-suffix {
+  .chairie-stat-bignum-suffix { /*styles small text next to the large number*/
     font-size: 16px;
     font-weight: 500;
     color: var(--text-tertiary);
     margin-left: 4px;
   }
-  .chairie-stat-bignum-label {
+  .chairie-stat-bignum-label { /*Styles label below the large number*/
     font-size: 13px;
     color: var(--text-secondary);
     margin-top: 6px;
@@ -622,10 +643,11 @@
     border-radius: 999px;
     transition: width 0.4s ease;
   }
+  /*styles the filled part of the progress bar*/
   .chairie-progress-fill.low   { background: var(--chairie-green); }
   .chairie-progress-fill.mid   { background: var(--chairie-honey); }
   .chairie-progress-fill.high  { background: var(--chairie-red); }
-  .chairie-progress-meta {
+  .chairie-progress-meta { /*places progress labels on the left and right*/
     display: flex;
     justify-content: space-between;
     font-size: 12px;
@@ -658,11 +680,12 @@
     font-size: 20px;
     flex-shrink: 0;
   }
+  /*different kpi icon colors*/
   .chairie-kpi-icon.green  { background: var(--chairie-green-soft); color: var(--chairie-green); }
   .chairie-kpi-icon.honey  { background: var(--chairie-honey-soft); color: #8a6320; }
   .chairie-kpi-icon.red    { background: var(--chairie-red-soft); color: var(--chairie-red); }
-  .chairie-kpi-text { display: flex; flex-direction: column; line-height: 1.2; }
-  .chairie-kpi-num {
+  .chairie-kpi-text { display: flex; flex-direction: column; line-height: 1.2; } /*pleaces KPI number and label below each other*/
+  .chairie-kpi-num { /*styles the kpi number*/
     font-size: 22px;
     font-weight: 800;
     color: var(--text-primary);
@@ -674,22 +697,23 @@
   }
 
   /* ────────────────────────────────────────────────────────────
-     Section titles + hints
+     Section titles and hints
+     These styles are used for headings within pages.
      ────────────────────────────────────────────────────────────*/
-  .chairie-section-title {
+  .chairie-section-title { /*styles section headings*/
     font-size: 18px;
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: -0.01em;
     margin: 22px 0 14px 0;
   }
-  .chairie-section-title .hint {
+  .chairie-section-title .hint { /*styles small hint text next to a section title*/
     font-size: 13px;
     font-weight: 400;
     color: var(--text-tertiary);
     margin-left: 8px;
   }
-  .chairie-eyebrow {
+  .chairie-eyebrow { /*styles small uppercase labels above sections*/
     font-size: 11px;
     font-weight: 700;
     color: var(--text-tertiary);
@@ -699,7 +723,8 @@
   }
 
   /* ────────────────────────────────────────────────────────────
-     Generic cards + empty placeholder (Profile + Settings)
+     Generic cards and empty placeholder boxes
+     Used on pages such as Profile and Settings
      ────────────────────────────────────────────────────────────*/
   .chairie-card {
     background: var(--bg-card);
@@ -729,7 +754,7 @@
     text-align: center;
     color: var(--text-secondary);
   }
-  .chairie-placeholder-icon {
+  .chairie-placeholder-icon { /*circle icon shown inside placeholder boxes*/
     width: 64px;
     height: 64px;
     border-radius: 50%;
@@ -759,7 +784,7 @@
   /* ────────────────────────────────────────────────────────────
      Map page — toolbar row (floor selector / free count / legend)
      ────────────────────────────────────────────────────────────*/
-  .chairie-stat {
+  .chairie-stat { /*Small statistic box used on the map page*/
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -771,12 +796,12 @@
     height: 100%;
     box-sizing: border-box;
   }
-  .chairie-stat-dot {
+  .chairie-stat-dot { /*Small green dot next to the free-seat number*/
     width: 9px;
     height: 9px;
     border-radius: 50%;
     background: var(--status-free);
-    flex-shrink: 0;
+    flex-shrink: 0; /*lets dot keep it's size even if everything else shrinks*/
   }
   .chairie-stat-text {
     display: flex;
@@ -806,7 +831,7 @@
     font-size: 13px;
     color: var(--text-secondary);
     height: 100%;
-    box-sizing: border-box;
+    box-sizing: border-box; /*includes content + padding + border*/
   }
   .chairie-legend-item {
     display: inline-flex;
@@ -824,6 +849,7 @@
 
   /* ────────────────────────────────────────────────────────────
      Seat detail panel (map page)
+     This box shows information about the selected seat on the map page.
      ────────────────────────────────────────────────────────────*/
   .chairie-seat-detail {
     background: var(--bg-card);
@@ -833,14 +859,14 @@
     box-shadow: var(--shadow-sm);
     margin-bottom: 14px;
   }
-  .chairie-seat-row {
+  .chairie-seat-row { /*One row inside the seat detail panel*/
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 6px 0;
     font-size: 14px;
   }
-  .chairie-seat-row + .chairie-seat-row {
+  .chairie-seat-row + .chairie-seat-row { /*Adds a dashed divider between seat detail rows*/
     border-top: 1px dashed var(--border-soft);
   }
   .chairie-seat-label {
@@ -865,7 +891,7 @@
   .chairie-status-pill.occupied    { background: var(--chairie-red-soft); color: var(--chairie-red); }
   .chairie-status-pill.maintenance { background: var(--bg-subtle); color: var(--text-secondary); }
 
-  .chairie-empty-detail {
+  .chairie-empty-detail { /*placeholder shown when no seat has been selected*/
     background: var(--bg-card);
     border: 1px dashed var(--border-strong);
     border-radius: var(--radius-md);
@@ -875,16 +901,18 @@
     font-size: 14px;
     margin-bottom: 14px;
   }
-  .chairie-empty-detail strong {
+  .chairie-empty-detail strong { /*makes important text inside the empty detail box darker*/
     color: var(--text-primary);
     font-weight: 700;
   }
 
   /* ────────────────────────────────────────────────────────────
-     Streamlit overrides — buttons, alerts, selectbox
+     Streamlit overrides
+     This changes the default look of buttons, alerts, selectboxes,
+     and Plotly charts so they match the chairie design
      ────────────────────────────────────────────────────────────*/
 
-  /* Primary buttons (st.button default) */
+  /* Default Streamlit buttons become green Chairie buttons (primary buttons, st.button default) */
   .stButton > button {
     background: var(--chairie-green) !important;
     color: #ffffff !important;
@@ -897,23 +925,23 @@
                 box-shadow 0.12s ease;
     box-shadow: var(--shadow-xs);
   }
-  .stButton > button:hover {
+  .stButton > button:hover { /*Darkens buttons on hover*/
     background: var(--chairie-green-hover) !important;
     border-color: var(--chairie-green-hover) !important;
     box-shadow: var(--shadow-sm);
   }
-  .stButton > button:active {
+  .stButton > button:active { /*Makes buttons look pressed when clicked*/
     transform: translateY(1px);
     box-shadow: none;
   }
-  .stButton > button:focus,
+  .stButton > button:focus, /*This adds a green focus ring*/
   .stButton > button:focus:not(:active) {
     border-color: var(--chairie-green) !important;
     box-shadow: 0 0 0 3px rgba(74, 124, 45, 0.20) !important;
     color: #ffffff !important;
   }
 
-  /* Secondary buttons via type="secondary" */
+  /* Styles secondary Streamlit buttons (via type="secondary") */
   .stButton > button[kind="secondary"] {
     background: var(--bg-card) !important;
     color: var(--text-primary) !important;
@@ -923,20 +951,20 @@
     background: var(--bg-subtle) !important;
     border-color: var(--border-strong) !important;
   }
-  .stButton > button[kind="secondary"]:focus,
+  .stButton > button[kind="secondary"]:focus, /*This adds a soft focus ring to secondary buttons*/
   .stButton > button[kind="secondary"]:focus:not(:active) {
-    box-shadow: 0 0 0 3px rgba(74, 124, 45, 0.15) !important;
+    box-shadow: 0 0 0 3px rgba(74, 124, 45, 0.15) !important; /*numbers after box shadow: horizonzal movement, vertical movement, blur amount and spread size*/
     color: var(--text-primary) !important;
   }
 
-  /* Alert boxes — softer + rounder */
+  /* Makes Streamlit alert boxes softer and more rounded */
   .stAlert {
     border-radius: var(--radius-md) !important;
     border: 1px solid var(--border-soft) !important;
     box-shadow: var(--shadow-xs);
   }
 
-  /* Selectbox – match the card aesthetic */
+  /* Styles the selectbox input area — match the card aesthetic */
   .stSelectbox [data-baseweb="select"] > div {
     background: var(--bg-card) !important;
     border-radius: var(--radius-sm) !important;
