@@ -60,12 +60,13 @@ except Exception:
 # Graceful fallback if zxing-cpp / numpy / Pillow are missing.
 # ─────────────────────────────────────────────────────────────
 try:
-    from qr_code import decode_qr, extract_seat_code
+    from qr_code import decode_qr, extract_seat_code, prepare_back_camera
     QR_CHECKIN_AVAILABLE = True
 except Exception:
     QR_CHECKIN_AVAILABLE = False
     decode_qr = None
     extract_seat_code = None
+    prepare_back_camera = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1503,28 +1504,22 @@ def _render_seat_detail_panel(seats, token):
                 f'</div>',
                 unsafe_allow_html=True,
             )
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Simulate QR / Check In", key=f"checkin_{seat['id']}"):
-                    result = check_in_from_qr(token, seat["id"])
-                    if result["success"]:
-                        st.success(result["message"])
-                        st.rerun()
-                    else:
-                        st.error(result["message"])
-            with c2:
-                if st.button(
-                    "Cancel Reservation",
-                    key=f"cancel_{seat['id']}",
-                    type="secondary",
-                ):
-                    result = cancel_reservation(token)
-                    if result["success"]:
-                        st.success(result["message"])
-                        st.rerun()
-                    else:
-                        st.error(result["message"])
-            st.caption("In the real app, 'Simulate QR / Check In' is replaced by a real QR scan.")
+            # Check-in happens via the real QR scan card lower on the
+            # map page (or by typing the seat code into the manual-entry
+            # expander there) — so the only action we surface here is
+            # cancelling the reservation.
+            if st.button(
+                "Cancel Reservation",
+                key=f"cancel_{seat['id']}",
+                type="secondary",
+                use_container_width=True,
+            ):
+                result = cancel_reservation(token)
+                if result["success"]:
+                    st.success(result["message"])
+                    st.rerun()
+                else:
+                    st.error(result["message"])
         else:
             st.error("Someone else reserved this seat.")
 
@@ -2187,6 +2182,13 @@ def _render_qr_scan_card(token, seats, reserved_seat):
     # The camera widget only renders here, so it never goes live until
     # the user explicitly clicks the button above.
     st.caption("Point your camera at the QR code on the seat.")
+    # Bias `st.camera_input` toward the BACK camera (the one users
+    # actually want for scanning the seat QR). Streamlit's API doesn't
+    # expose `facingMode`, so qr_code.prepare_back_camera() patches
+    # `navigator.mediaDevices.getUserMedia` on the parent document
+    # to inject the preference. Must run BEFORE st.camera_input mounts.
+    if prepare_back_camera is not None:
+        prepare_back_camera()
     photo = st.camera_input(
         "QR scanner",
         key=f"qr_camera_{ss['qr_camera_id']}",  # unique key per scan session
