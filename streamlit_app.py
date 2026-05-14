@@ -95,6 +95,110 @@ def _inject_app_styles():
     if css_part:
         st.markdown(css_part, unsafe_allow_html=True)
 
+    # ── Add-on styles introduced *after* app_styles.html was authored ──
+    # Kept here so we don't have to touch the shared CSS file for small
+    # new components (lunch-break note, profile page tiles).
+    st.markdown(
+        """
+        <style>
+          /* Lunch-break inline note (My Seat card) */
+          .chairie-lunch-note {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            line-height: 1.45;
+            margin: 6px 0 10px 0;
+            border: 1px solid transparent;
+          }
+          .chairie-lunch-note.open {
+            background: var(--chairie-honey-soft);
+            border-color: var(--chairie-honey);
+            color: #5c4100;
+          }
+          .chairie-lunch-note.used {
+            background: var(--chairie-green-soft);
+            border-color: var(--chairie-green);
+            color: #1f3d12;
+          }
+          .chairie-lunch-note.closed {
+            background: var(--bg-subtle);
+            border-color: var(--border-soft);
+            color: var(--text-secondary);
+          }
+
+          /* Profile page — avatar header */
+          .chairie-profile-header {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-soft);
+            border-radius: var(--radius-lg);
+            padding: 22px 24px;
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 6px;
+          }
+          .chairie-profile-avatar {
+            width: 68px;
+            height: 68px;
+            border-radius: 50%;
+            background: var(--chairie-green-soft);
+            color: var(--chairie-green);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 34px;
+            flex-shrink: 0;
+            border: 1px solid var(--border-soft);
+          }
+          .chairie-profile-name {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+            line-height: 1.2;
+          }
+          .chairie-profile-email {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+          }
+
+          /* Profile page — current seat chip inside the seat-info card */
+          .chairie-profile-seat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-soft);
+            border-radius: var(--radius-md);
+            box-shadow: var(--shadow-xs);
+          }
+          .chairie-profile-seat-row .label {
+            font-size: 12px;
+            color: var(--text-tertiary);
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+          .chairie-profile-seat-row .value {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-primary);
+          }
+          .chairie-profile-seat-row .value.muted {
+            color: var(--text-tertiary);
+            font-weight: 500;
+          }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def _inject_app_script():
     """Inject the JS half (everything BELOW the marker) via
@@ -539,6 +643,157 @@ def release_current_seat(token):
 
 
 # ─────────────────────────────────────────────────────────────
+# LUNCH BREAK  (daily 1-hour grace window, 11:00–14:00 Zurich)
+# ─────────────────────────────────────────────────────────────
+# Every checked-in user gets one 1-hour lunch break per day, claimable
+# at any moment in the 11:00–14:00 Zurich window. Once started, the
+# break runs for 60 min and is tracked in session state — both because
+# we don't want to add a new Supabase column for this, AND because the
+# break is primarily a UX construct: the only persistent effect is
+# bumping the seat's `occupied_until` forward by an hour so the
+# auto-expire job doesn't release the seat while the user is at lunch.
+LUNCH_BREAK_START_HOUR = 11   # inclusive (Zurich local)
+LUNCH_BREAK_END_HOUR   = 14   # exclusive — last claim at 13:59
+LUNCH_BREAK_MINUTES    = 60
+
+
+def _lunch_break_window_open():
+    """True if the wall clock (Zurich) is currently in the claim window."""
+    now = _zurich_now()
+    return LUNCH_BREAK_START_HOUR <= now.hour < LUNCH_BREAK_END_HOUR
+
+
+def _lunch_break_state():
+    """Return the current lunch-break state for the logged-in user.
+
+    Returns a dict with:
+      - window_open:    bool  — is it 11:00–14:00 right now?
+      - active:         bool  — is a break currently running?
+      - ends_at_iso:    str|None — when the break ends (UTC ISO)
+      - claimed_today:  bool  — has the user already used today's break?
+    """
+    window_open = _lunch_break_window_open()
+    today_str   = _zurich_now().strftime("%Y-%m-%d")
+
+    # Persisted in session state. If the date stamp doesn't match
+    # today's Zurich date, the user is free to claim a fresh break.
+    claimed_date  = st.session_state.get("lunch_break_claimed_date")
+    claimed_today = (claimed_date == today_str)
+
+    active_until_iso = st.session_state.get("lunch_break_active_until")
+    active = False
+    if active_until_iso:
+        try:
+            ends = dt.fromisoformat(active_until_iso)
+            active = ends > _now()
+        except Exception:
+            active = False
+
+    return {
+        "window_open":   window_open,
+        "active":        active,
+        "ends_at_iso":   active_until_iso if active else None,
+        "claimed_today": claimed_today,
+    }
+
+
+def start_lunch_break(token, seat_id):
+    """Claim today's 1-hour lunch break on the user's occupied seat.
+
+    Extends the seat's `occupied_until` to at least (now + 60 min)
+    so the auto-expire job doesn't release the seat while the user is
+    away. Records the claim in session state so the same user can't
+    claim it again until tomorrow.
+    """
+    if not SUPABASE_OK:
+        return {"success": False, "message": "Supabase not configured."}
+
+    state = _lunch_break_state()
+    if not state["window_open"]:
+        return {
+            "success": False,
+            "message": f"Lunch break is only available between "
+                       f"{LUNCH_BREAK_START_HOUR:02d}:00 and "
+                       f"{LUNCH_BREAK_END_HOUR:02d}:00.",
+        }
+    if state["active"]:
+        return {"success": False, "message": "You are already on a lunch break."}
+    if state["claimed_today"]:
+        return {"success": False, "message": "You already used your lunch break today."}
+
+    try:
+        email = _email_from_token(token)
+        if not email:
+            return {"success": False, "message": "Unauthorized"}
+
+        seat_res = supabase.table("seats").select("*").eq("id", seat_id).limit(1).execute()
+        if not seat_res.data:
+            return {"success": False, "message": "Seat not found."}
+        seat = seat_res.data[0]
+        if seat.get("occupied_by") != email or seat.get("status") != "occupied":
+            return {"success": False, "message": "You must be checked in to take a lunch break."}
+
+        break_ends_iso = _to_iso(_now() + timedelta(minutes=LUNCH_BREAK_MINUTES))
+
+        # Don't shorten an existing longer occupied_until — only extend it.
+        current_until = seat.get("occupied_until")
+        new_until = break_ends_iso
+        if current_until and current_until > break_ends_iso:
+            new_until = current_until
+
+        supabase.table("seats").update(
+            {"occupied_until": new_until}
+        ).eq("id", seat_id).execute()
+
+        today_str = _zurich_now().strftime("%Y-%m-%d")
+        st.session_state["lunch_break_claimed_date"] = today_str
+        st.session_state["lunch_break_active_until"] = break_ends_iso
+
+        return {
+            "success": True,
+            "message": "Enjoy your break — your seat is held for 1 hour.",
+            "ends_at_iso": break_ends_iso,
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+# ─────────────────────────────────────────────────────────────
+# PROFILE  (Account page logic — folded in from Account_page.py)
+# ─────────────────────────────────────────────────────────────
+def get_profile(token):
+    """Fetch the `profiles` row for the current user. Returns {} if
+    Supabase is unavailable or the row hasn't been created yet."""
+    if not SUPABASE_OK:
+        return {}
+    try:
+        email = _email_from_token(token)
+        if not email:
+            return {}
+        resp = supabase.table("profiles").select("*").eq("email", email).limit(1).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception:
+        return {}
+
+
+def save_profile(token, full_name, gender):
+    """Upsert the user's profile row (email + full_name + gender)."""
+    if not SUPABASE_OK:
+        return False
+    try:
+        email = _email_from_token(token)
+        if not email:
+            return False
+        supabase.table("profiles").upsert(
+            {"email": email, "full_name": full_name, "gender": gender},
+            on_conflict="email",
+        ).execute()
+        return True
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────
 # AUTH STATE  (from auth.py)
 # ─────────────────────────────────────────────────────────────
 def init_auth_state():
@@ -576,6 +831,12 @@ def logout_user():
     st.session_state["selected_seat_id"] = None
     # Reset the visible page so the next login starts on the landing page.
     st.session_state["current_page"] = "home"
+    # Drop any in-progress lunch-break state. We keep these out of the
+    # `defaults` dict above because they're optional/transient — using
+    # .pop ensures a stale value from a previous session doesn't leak
+    # into the next user on the same browser.
+    st.session_state.pop("lunch_break_active_until", None)
+    st.session_state.pop("lunch_break_claimed_date", None)
     # Drop ?seat=… from the URL so a fresh session starts clean.
     try:
         clear_seat_selection()
@@ -871,6 +1132,169 @@ def login_page():
 # ─────────────────────────────────────────────────────────────
 # MAIN APP  (combined indexnew.html layout + app.py logic)
 # ─────────────────────────────────────────────────────────────
+def _render_lunch_break_block(seat, token, key_prefix=""):
+    """Render the lunch-break sub-section inside the My Seat card.
+
+    Shows different states depending on whether:
+      - the user is currently on a break (live countdown)
+      - the user already claimed today's break (muted note)
+      - the claim window is open right now (action button)
+      - we're outside 11:00–14:00 (muted note)
+
+    Only meaningful when the user is OCCUPYING (checked-in) the seat —
+    reservations expire in 10 min so a break there makes no sense.
+    `key_prefix` keeps Streamlit's button keys unique if this function
+    is somehow rendered twice in a single rerun (e.g. two seat cards).
+    """
+    if not seat or seat.get("status") != "occupied" or not seat.get("occupied_by_me"):
+        return
+
+    state = _lunch_break_state()
+
+    # ── Active break: live countdown + visual highlight ─────────────
+    if state["active"]:
+        st.markdown(
+            f'<div class="chairie-alert chairie-alert-warning">'
+            f'🍽️ <strong>On lunch break</strong> — your seat is held. '
+            f'{live_countdown_html(state["ends_at_iso"])} left'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    # ── Already used today's break ──────────────────────────────────
+    if state["claimed_today"]:
+        st.markdown(
+            '<div class="chairie-lunch-note used">'
+            '✓ Lunch break already used today. Comes back tomorrow.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    # ── Inside the claim window: actionable button ──────────────────
+    if state["window_open"]:
+        st.markdown(
+            '<div class="chairie-lunch-note open">'
+            f'🍽️ <strong>Lunch break available</strong> — claim a free '
+            f'{LUNCH_BREAK_MINUTES}-min hold on your seat.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "Take 1-hour lunch break",
+            key=f"{key_prefix}lunch_break_{seat['id']}",
+            use_container_width=True,
+        ):
+            result = start_lunch_break(token, seat["id"])
+            if result.get("success"):
+                st.success(result["message"])
+                st.rerun()
+            else:
+                st.error(result.get("message", "Could not start lunch break."))
+        return
+
+    # ── Outside the window: muted info ──────────────────────────────
+    st.markdown(
+        f'<div class="chairie-lunch-note closed">'
+        f'🍽️ Lunch break is available daily between '
+        f'<strong>{LUNCH_BREAK_START_HOUR:02d}:00</strong> and '
+        f'<strong>{LUNCH_BREAK_END_HOUR:02d}:00</strong>.'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_my_seat_panel(seat, token, key_prefix=""):
+    """Render the pinned "Your seat" card shown automatically whenever
+    the user has a reserved or occupied seat.
+
+    Lives at the top of the Map page and just below the hero on the
+    Home page. Re-uses the same `chairie-seat-detail` card styling
+    as the click-driven detail panel so the two never look out of
+    sync, but adds:
+      - a contextual eyebrow ("Your seat · checked in" / "reserved")
+      - the lunch-break sub-block (when checked-in)
+      - the right primary action (Release / Cancel)
+    `key_prefix` keeps Streamlit's widget keys unique when this panel
+    appears on more than one page during a single rerun.
+    """
+    if not seat:
+        return
+
+    status = seat.get("status")
+    is_occupied = (status == "occupied" and seat.get("occupied_by_me"))
+    is_reserved = (status == "reserved" and seat.get("reserved_by_me"))
+
+    if not (is_occupied or is_reserved):
+        return
+
+    eyebrow = "Your seat · checked in" if is_occupied else "Your seat · reserved"
+
+    st.markdown(
+        f'<div class="chairie-eyebrow">{eyebrow}</div>',
+        unsafe_allow_html=True,
+    )
+
+    status_class = (status or "maintenance").lower()
+    st.markdown(
+        f"""
+        <div class="chairie-seat-detail">
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Seat</span>
+            <span class="chairie-seat-value">{seat['code']}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Building</span>
+            <span class="chairie-seat-value">{seat['building']}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Floor</span>
+            <span class="chairie-seat-value">{seat['floor']}</span>
+          </div>
+          <div class="chairie-seat-row">
+            <span class="chairie-seat-label">Status</span>
+            <span class="chairie-status-pill {status_class}">{status}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Lunch-break sub-section (only renders content when checked-in)
+    _render_lunch_break_block(seat, token, key_prefix=key_prefix)
+
+    # Primary action: release a checked-in seat, or cancel a reservation
+    if is_occupied:
+        if st.button(
+            "Release seat",
+            key=f"{key_prefix}myseat_release_{seat['id']}",
+            type="secondary",
+            use_container_width=True,
+        ):
+            result = release_current_seat(token)
+            if result.get("success"):
+                st.success(result["message"])
+                # Clear lunch-break state too — they no longer have a seat.
+                st.session_state.pop("lunch_break_active_until", None)
+                st.rerun()
+            else:
+                st.error(result.get("message", "Could not release seat."))
+    elif is_reserved:
+        if st.button(
+            "Cancel reservation",
+            key=f"{key_prefix}myseat_cancel_{seat['id']}",
+            type="secondary",
+            use_container_width=True,
+        ):
+            result = cancel_reservation(token)
+            if result.get("success"):
+                st.success(result["message"])
+                st.rerun()
+            else:
+                st.error(result.get("message", "Could not cancel reservation."))
+
+
 def _render_seat_detail_panel(seats, token):
     """Render the seat detail panel (info + action buttons).
 
@@ -1673,6 +2097,18 @@ def landing_page(token):
         return
     seats = seats_result["seats"]
 
+    # ── "Your seat" pinned card (only if user has a seat) ───────────────
+    # Sits just below the welcoming hero so logged-in users with an
+    # active seat see their status immediately on landing — no need
+    # to navigate to the map first. Includes the daily lunch-break
+    # control when the 11–14h window is open.
+    my_seat = next(
+        (s for s in seats if s.get("occupied_by_me") or s.get("reserved_by_me")),
+        None,
+    )
+    if my_seat:
+        _render_my_seat_panel(my_seat, token, key_prefix="home_")
+
     # ── KPI strip ───────────────────────────────────────────────────────
     total_free = sum(1 for s in seats if s.get("status") == "free")
     floors_n   = len(FLOOR_META)
@@ -1804,55 +2240,167 @@ def get_user_study_stats(token):
         st.error(f"Stats error: {e}")
         return None
 # ─────────────────────────────────────────────────────────────
-# PROFILE PAGE  (placeholder for now)
+# PROFILE PAGE  (Account info + study statistics, merged in-file)
 # ─────────────────────────────────────────────────────────────
+# The page is composed of four blocks, all styled with the same
+# chairie-* design system used elsewhere in the app:
+#   1. Avatar header   — circular emoji avatar + name + email
+#   2. Current seat    — one-line summary of the user's active seat
+#                        (or a muted "No active seat" if they have none)
+#   3. Personal info   — editable form (full name + gender) saved to
+#                        the `profiles` Supabase table via save_profile()
+#   4. Study stats     — three KPI cards: this-week / total / sessions
+#
+# The Account_page.py file in the repo defined this view as its own
+# module that re-imported back into streamlit_app — which created a
+# circular import and split the page from the rest of the app's style
+# layer. Folding it in here removes both issues.
 def profile_page(token):
-
     _render_top_bar("Profile")
 
-    stats = get_user_study_stats(token)
+    # ── Pull everything we need up-front ─────────────────────────────
+    profile      = get_profile(token) or {}
+    status       = get_user_status(token) or {}
+    stats        = get_user_study_stats(token)
+    email        = st.session_state.get("username", "") or ""
+    full_name    = profile.get("full_name", "") or ""
+    gender       = profile.get("gender") or "Prefer not to say"
 
+    # Avatar emoji — same mapping the old Account_page used
+    avatar = {"Female": "👩", "Male": "👨"}.get(gender, "🧑")
+    display_name = full_name or email or "Your account"
+
+    # ── 1) Avatar header ─────────────────────────────────────────────
     st.markdown(
-        """
-        <div class="chairie-section-title">
-            Your study statistics
+        f"""
+        <div class="chairie-profile-header">
+          <div class="chairie-profile-avatar">{avatar}</div>
+          <div>
+            <div class="chairie-profile-name">{display_name}</div>
+            <div class="chairie-profile-email">{email}</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    if not stats:
-        st.info("No study statistics yet.")
-        return
+    # ── 2) Current seat (one-line summary) ───────────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Current seat</div>',
+        unsafe_allow_html=True,
+    )
+    current_seat_label = "No active seat"
+    current_seat_muted = True
+    if status.get("success"):
+        if status.get("checked_in_seat"):
+            seat = status["checked_in_seat"]
+            current_seat_label = f"{seat['code']} · checked in"
+            current_seat_muted = False
+        elif status.get("reserved_seat"):
+            seat = status["reserved_seat"]
+            current_seat_label = f"{seat['code']} · reserved"
+            current_seat_muted = False
 
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.metric(
-            "Hours studied this week",
-            f"{stats['weekly_hours']}h"
-        )
-
-    with c2:
-        st.metric(
-            "Total study hours",
-            f"{stats['total_hours']}h"
-        )
-
-    with c3:
-        st.metric(
-            "Study sessions",
-            stats["sessions"]
-        )
-
-    st.markdown("---")
-
+    value_class = "value muted" if current_seat_muted else "value"
     st.markdown(
         f"""
-        ### Logged in as
-        `{st.session_state.get("username")}`
-        """
+        <div class="chairie-profile-seat-row">
+          <span class="label">Where you're studying</span>
+          <span class="{value_class}">{current_seat_label}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+
+    # ── 3) Personal information (editable form) ──────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Personal information</div>',
+        unsafe_allow_html=True,
+    )
+    gender_options = ["Female", "Male", "Prefer not to say"]
+    try:
+        gender_index = gender_options.index(gender)
+    except ValueError:
+        gender_index = gender_options.index("Prefer not to say")
+
+    with st.form("profile_form", clear_on_submit=False):
+        new_name = st.text_input("Full name", value=full_name)
+        new_gender = st.selectbox(
+            "Gender",
+            gender_options,
+            index=gender_index,
+        )
+        save_clicked = st.form_submit_button("Save changes")
+        if save_clicked:
+            if save_profile(token, new_name, new_gender):
+                st.success("Profile saved.")
+                st.rerun()
+            else:
+                st.error(
+                    "Could not save. Make sure the `profiles` table "
+                    "exists in Supabase with `email`, `full_name`, "
+                    "and `gender` columns."
+                )
+
+    # ── 4) Study statistics (chairie-kpi tiles) ──────────────────────
+    st.markdown(
+        '<div class="chairie-section-title">Study statistics '
+        '<span class="hint">since you started using Chairie</span></div>',
+        unsafe_allow_html=True,
+    )
+    weekly_hours  = (stats or {}).get("weekly_hours", 0)
+    total_hours   = (stats or {}).get("total_hours",  0)
+    sessions_n    = (stats or {}).get("sessions",     0)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            f"""
+            <div class="chairie-kpi">
+              <div class="chairie-kpi-icon green">⏱</div>
+              <div class="chairie-kpi-text">
+                <span class="chairie-kpi-num">{weekly_hours}h</span>
+                <span class="chairie-kpi-label">Hours this week</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c2:
+        st.markdown(
+            f"""
+            <div class="chairie-kpi">
+              <div class="chairie-kpi-icon honey">∑</div>
+              <div class="chairie-kpi-text">
+                <span class="chairie-kpi-num">{total_hours}h</span>
+                <span class="chairie-kpi-label">Total study hours</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with c3:
+        st.markdown(
+            f"""
+            <div class="chairie-kpi">
+              <div class="chairie-kpi-icon red">▦</div>
+              <div class="chairie-kpi-text">
+                <span class="chairie-kpi-num">{sessions_n}</span>
+                <span class="chairie-kpi-label">Study sessions</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    if not stats:
+        st.markdown(
+            '<div class="chairie-empty-detail" style="margin-top:12px;">'
+            'No study sessions yet — check into a seat to start tracking '
+            'your hours.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
 # ─────────────────────────────────────────────────────────────
 # SETTINGS PAGE  (placeholder for now)
@@ -1898,9 +2446,11 @@ def map_page(token):
         reserved_seat   = status_result.get("reserved_seat")
         checked_in_seat = status_result.get("checked_in_seat")
 
-        if reserved_seat:
-            # Live countdown — JS ticker in app_styles.html updates the
-            # <span class="chairie-countdown"> every second, no rerun needed.
+        # If the user is RESERVED but hasn't checked in yet, keep the
+        # legacy honey-coloured countdown alert — they need a clear
+        # nudge to scan within 10 min, and the action set in My Seat
+        # is just "cancel" which doesn't carry that urgency.
+        if reserved_seat and not checked_in_seat:
             st.markdown(
                 f'<div class="chairie-alert chairie-alert-warning">'
                 f'You reserved seat <strong>{reserved_seat["code"]}</strong>. '
@@ -1910,16 +2460,14 @@ def map_page(token):
                 f'</div>',
                 unsafe_allow_html=True,
             )
-        if checked_in_seat:
-            st.markdown(
-                f'<div class="chairie-alert chairie-alert-success">'
-                f'Checked in at seat <strong>{checked_in_seat["code"]}</strong>. '
-                f'Re-check in after {RECHECK_HOURS} hour(s). ⏱ '
-                f'{live_countdown_html(checked_in_seat["occupied_until"])} '
-                f'left'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
+
+    # ── "Your seat" pinned card (auto-shown when user has a seat) ────────
+    # Sits at the top of the map page, between the status alert (if any)
+    # and the QR card. Shows the seat detail plus the daily lunch-break
+    # control without requiring the user to click on the map first.
+    my_seat_on_map = checked_in_seat or reserved_seat
+    if my_seat_on_map:
+        _render_my_seat_panel(my_seat_on_map, token, key_prefix="map_")
 
     # ── Fetch seats from Supabase ────────────────────────────────────────
     seats_result = get_seats(token)
