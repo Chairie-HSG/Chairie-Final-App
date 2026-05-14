@@ -1,27 +1,12 @@
 """
-seat_manager.py
 
-Backend / Business-logic layer for Chairie (HSG Seat Finder).
+This file contains the parts of the app that actually change or read data:
+login, signup, seat reservation, QR check-in, seat release, lunch break,
+occupancy prediction, and study statistics.
 
-This module owns everything that is NOT Streamlit UI rendering:
-- Supabase client setup
-- Authentication requests (login / signup)
-- Seat reservation, check-in, re-check-in, and release
-- Lunch-break logic (daily 1-hour grace window)
-- Countdown math (seconds_left, countdown)
-- Floor metadata + per-floor aggregate stats
-- ML occupancy forecast + historical snapshot writer
-- Study-session statistics
-- QR-scan resolution logic (decides what to do for a scanned seat code)
+The Streamlit page file should mostly handle what the user sees.
+This file handles the backend.
 
-The companion file `streamlit_app.py` imports from this module and
-focuses purely on rendering the UI (pages, panels, sidebar, top bar).
-
-A few functions here still touch `st.session_state` (the lunch-break
-state machine and a couple of error toasts). That's intentional —
-session state is persistence, not rendering, and keeping it inside
-these helpers means the UI layer doesn't have to thread state around.
-Streamlit is a hard dependency of the app either way.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -35,9 +20,10 @@ import streamlit as st          # only used for st.secrets + st.session_state
 from supabase import create_client
 
 
-# ─────────────────────────────────────────────────────────────
+
 # SUPABASE CLIENT
-# ─────────────────────────────────────────────────────────────
+# Connects our streamlit to Supabase through the keys in secrets 
+# This lets the app work on streamlit cloud which allows it to be more than a local app
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -54,36 +40,32 @@ if SUPABASE_URL and SUPABASE_KEY:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         SUPABASE_OK = True
     except Exception:
-        SUPABASE_OK = False
+        SUPABASE_OK = False 
 
 
-# ─────────────────────────────────────────────────────────────
+
 # CONSTANTS
-# ─────────────────────────────────────────────────────────────
+# This establishes the main time rules for the app which are : 
+#  Reservation lasts 10 minutes, checked-in seat lasts 2 hours before needing to recheck in
 RESERVATION_MINUTES = 10
 RECHECK_HOURS = 2
-# How early (before occupied_until expires) the re-check-in window opens.
-# Scanning your seat's QR within this window extends `occupied_until` by
-# another RECHECK_HOURS without starting a new study session. Scans
-# outside the window just return a friendly "already checked in" note.
+# Only allows recheck in in the last 30 minutes
 RECHECK_WINDOW_MINUTES = 30
 
-# All wall-clock display is in Switzerland's local timezone. Storage in
-# Supabase stays in UTC (good practice for ISO timestamps); we only
-# convert when *showing* a time to the user.
+# We store times in UTC, but show times in Zurich time
 ZURICH_TZ = ZoneInfo("Europe/Zurich")
 
 
-# ─────────────────────────────────────────────────────────────
 # TIME HELPERS
-# ─────────────────────────────────────────────────────────────
-def _now():
-    """UTC datetime used by all storage / comparison logic."""
+ """
+    Returns the current time in UTC to store it & use it for time calculations, and later convert it in Zurich timezone
+"""
+def _now(): 
     return dt.now(timezone.utc)
 
 
 def _zurich_now():
-    """Zurich-local datetime used only for display (KPI strip, forecast)."""
+    """Returns Zurich time, only for some user side things like lunch break"""
     return dt.now(ZURICH_TZ)
 
 
@@ -91,18 +73,23 @@ def _to_iso(d):
     return d.isoformat()
 
 
-# ─────────────────────────────────────────────────────────────
 # AUTH HELPERS
-# ─────────────────────────────────────────────────────────────
+"""
+    Uses the Supabase token to get the currently logged-in user.
+
+"""
 def _user_from_token(token):
     if not token or not SUPABASE_OK:
         return None
     try:
         response = supabase.auth.get_user(token)
         return response.user
-    except Exception:
-        return None
+    except Exception: #case of error
+        return None 
+"""
+    Gets the logged-in user's email from their Supabase token.
 
+"""
 
 def _email_from_token(token):
     user = _user_from_token(token)
@@ -110,7 +97,11 @@ def _email_from_token(token):
         return None
     return user.email
 
+ """
+    Tries to log a user in with Supabase's authentification system
 
+    Returns the user's email and access token if the account exists & the logins are correct
+"""
 def login_request(email, password):
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
@@ -126,7 +117,9 @@ def login_request(email, password):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
+ """
+    Creates a new Supabase auth user using Supabase's authentification system
+"""
 def signup_request(email, password):
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
@@ -139,9 +132,10 @@ def signup_request(email, password):
         return {"success": False, "message": str(e)}
 
 
-# ─────────────────────────────────────────────────────────────
-# COUNTDOWN HELPERS  (pure math — used by both backend and UI)
-# ─────────────────────────────────────────────────────────────
+# COUNTDOWN HELPERS  
+ """
+    Calculates how many seconds are left until the stored target time.
+"""
 def seconds_left(iso_value):
     if not iso_value:
         return 0
@@ -150,17 +144,21 @@ def seconds_left(iso_value):
     diff = int((target - now).total_seconds())
     return max(diff, 0)
 
-
+"""
+Format conversion
+"""
 def countdown(iso_value):
-    """Static MM:SS string. Kept for places where a one-shot snapshot is
-    fine (e.g. log messages, the QR scan result on first display)."""
     secs = seconds_left(iso_value)
     return f"{secs // 60:02d}:{secs % 60:02d}"
 
 
-# ─────────────────────────────────────────────────────────────
 # SEAT MANAGEMENT
-# ─────────────────────────────────────────────────────────────
+"""
+    Frees seats whose timers have expired.
+
+    Reserved seats become free after the reservation deadline.
+    Occupied seats become free after the check-in deadline.
+"""
 def _expire_seats():
     if not SUPABASE_OK:
         return
@@ -193,7 +191,10 @@ def _expire_seats():
                 ).eq("id", seat["id"]).execute()
     except Exception:
         pass
-
+"""
+    Loads all seats from Supabase
+    Also indicates their status in relation to the current user so the Front end can display it
+"""
 
 def get_seats(token=None):
     if not SUPABASE_OK:
@@ -221,7 +222,10 @@ def get_seats(token=None):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+ """
+    Checks if the current user already has reserved or check in a seat, in which case we return it and the user cannot reserve another seat
 
+"""
 def get_user_status(token=None):
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
@@ -270,7 +274,10 @@ def get_user_status(token=None):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
-
+ """
+    Reserves a free seat for the logged-in user.
+    
+"""
 def reserve_seat(token, seat_id):
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
@@ -284,12 +291,12 @@ def reserve_seat(token, seat_id):
             supabase.table("seats").select("*").eq("occupied_by", email).eq("status", "occupied").execute()
         )
         if occupied.data:
-            return {"success": False, "message": "You are currently checked in somewhere else."}
+            return {"success": False, "message": "You are currently checked in somewhere else."}  # Do not allow users to hold a reservation while already checked in.
 
         existing_res = (
             supabase.table("seats").select("*").eq("reserved_by", email).eq("status", "reserved").execute()
         )
-        if existing_res.data and existing_res.data[0]["id"] != seat_id:
+        if existing_res.data and existing_res.data[0]["id"] != seat_id: # Do not allow users to reserve multiple different seats.
             return {"success": False, "message": "You already have another seat reserved."}
 
         seat_res = supabase.table("seats").select("*").eq("id", seat_id).limit(1).execute()
@@ -303,14 +310,14 @@ def reserve_seat(token, seat_id):
             return {"success": False, "message": "Someone else reserved it first."}
 
         expires_at = _to_iso(_now() + timedelta(minutes=RESERVATION_MINUTES))
-        supabase.table("seats").update(
+        supabase.table("seats").update(  # Save the reservation owner and expiry time in Supabase.
             {"status": "reserved", "reserved_by": email, "reserved_until": expires_at}
         ).eq("id", seat_id).execute()
 
         return {
             "success": True,
             "message": f"Seat {seat['code']} reserved successfully.",
-            "reservation_expires_at": expires_at,
+            "reservation_expires_at": expires_at,  
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -337,7 +344,10 @@ def cancel_reservation(token):
         return {"success": True, "message": "Reservation cancelled."}
     except Exception as e:
         return {"success": False, "message": str(e)}
+ """
+    Checks the user into a seat after scanning or entering its QR code.
 
+"""
 
 def check_in_from_qr(token, seat_id):
     if not SUPABASE_OK:
@@ -391,20 +401,13 @@ def check_in_from_qr(token, seat_id):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+ """
+    Extends the user's current check-in timer by scanning their own seat again.
 
+    Only works if the user already occupies a seat, hasnt released it yet (manually or automatically
+"""
 def recheck_in_from_qr(token, seat_id):
-    """Extend the user's current check-in by another `RECHECK_HOURS`
-    via a QR re-scan of their own seat.
-
-    Differs from `check_in_from_qr` in three important ways:
-      1. Only works on a seat the user *already* occupies.
-      2. Only works inside the last `RECHECK_WINDOW_MINUTES` of the
-         current `occupied_until` — too-early scans are rejected with
-         a friendly "available in N min" message.
-      3. Does NOT create a new `study_sessions` row — the original
-         row's `started_at` stays put, so total study time is computed
-         correctly when the seat is eventually released.
-    """
+ 
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
     try:
@@ -456,22 +459,12 @@ def recheck_in_from_qr(token, seat_id):
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
-
+ """
+    Checks whether the user's current seat is inside the re-check-in window.
+"""
 
 def _recheck_window_state(seat):
-    """Return whether the user's occupied seat is currently inside the
-    re-check-in window. Used by the UI to surface a contextual hint
-    in the My Seat panel and by `_resolve_scanned_code` to decide
-    whether a self-scan should extend or just acknowledge.
 
-    Returns a dict with:
-      - is_occupied_by_me:  bool
-      - window_open:        bool  — True if we're in the last
-                                    RECHECK_WINDOW_MINUTES of the
-                                    current `occupied_until`
-      - minutes_to_open:    int|None — minutes until window opens
-                                    (None once it's already open)
-    """
     if not seat or seat.get("status") != "occupied" or not seat.get("occupied_by_me"):
         return {"is_occupied_by_me": False, "window_open": False, "minutes_to_open": None}
 
