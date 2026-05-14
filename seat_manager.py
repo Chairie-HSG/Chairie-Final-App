@@ -917,9 +917,7 @@ def get_user_study_stats(token):
 # QR-SCAN RESOLUTION 
  """
     Decides what should happen when a QR code is scanned.
-
-    It does not open the camera itself automatically.
-    It only receives the scanned seat code and decides whether the user
+    It receives the scanned seat code and decides whether the user
     can check in, re-check in, or should see an error message.
 """
 def _resolve_scanned_code(token, seats, scanned_code):
@@ -953,8 +951,7 @@ def _resolve_scanned_code(token, seats, scanned_code):
                     ),
                 }
             # Re-check failed (e.g. raced past the window edge) — fall
-            # through to a soft acknowledgement so the user isn't shown
-            # a scary error for what is, essentially, a no-op.
+      
             return {
                 "kind": "ok",
                 "message": recheck.get(
