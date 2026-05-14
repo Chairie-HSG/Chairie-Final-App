@@ -1,6 +1,6 @@
 """
 account_page.py
-Account tab for Chairie – shows profile info, study statistics, and
+Account tab for Chairie, shows profile info, study statistics, and
 current seat status.
 """
 
@@ -8,6 +8,7 @@ import streamlit as st
 
 
 def _get_profile(token):
+    """Return the user's profile row from Supabase, or None on failure"""
     try:
         from streamlit_app import supabase, SUPABASE_OK, _email_from_token
         if not SUPABASE_OK:
@@ -20,6 +21,7 @@ def _get_profile(token):
 
 
 def _save_profile(token, full_name, gender):
+    """Upsert the user's full name and gender into the Supabase profiles table"""
     try:
         from streamlit_app import supabase, SUPABASE_OK, _email_from_token
         if not SUPABASE_OK:
@@ -35,6 +37,7 @@ def _save_profile(token, full_name, gender):
 
 
 def _get_status(token):
+    """Return the user's current seat status dict, or {"success": False} on error"""
     try:
         from streamlit_app import get_user_status
         return get_user_status(token)
@@ -44,14 +47,7 @@ def _get_status(token):
 
 def _get_study_stats(token):
     """Pull weekly hours / total hours / session count from the
-    `study_sessions` table via streamlit_app.get_user_study_stats().
-
-    Note: the previous version of this file pulled study time from
-    `profiles.total_hours_studied`, but nothing in the codebase ever
-    writes to that column — hours always read as 0. The
-    `study_sessions` table is the actual source of truth, populated
-    by check_in_from_qr / release_current_seat in streamlit_app.py.
-    """
+    `study_sessions` table via streamlit_app.get_user_study_stats()"""
     try:
         from streamlit_app import get_user_study_stats
         return get_user_study_stats(token)
@@ -60,6 +56,7 @@ def _get_study_stats(token):
 
 
 def render_account_page(token):
+    """Render the Account page showing profile info, study, stats, and current seat"""
     st.title("My Account")
 
     profile = _get_profile(token)
@@ -70,16 +67,17 @@ def render_account_page(token):
     gender    = (profile or {}).get("gender", "Prefer not to say")
     email     = st.session_state.get("username", "")
 
-    # ── Avatar + name ─────────────────────────────────────────
+    #Avatar & name
     avatar = {"Female": "👩", "Male": "👨"}.get(gender, "🧑")
     st.markdown(f"## {avatar} {full_name or email}")
     st.caption(email)
     st.divider()
 
-    # ── Study statistics ──────────────────────────────────────
+    #Study statistics
     weekly_hours = (stats or {}).get("weekly_hours", 0)
     total_hours = (stats or {}).get("total_hours", 0)
     sessions_n = (stats or {}).get("sessions", 0)
+    #Convert fractional hours to whole minutes for a friendlier display
     
     weekly_minutes = round(weekly_hours * 60)
     total_minutes = round(total_hours * 60)
@@ -94,7 +92,7 @@ def render_account_page(token):
         st.caption("No study sessions yet — check into a seat to "
                    "start tracking your hours.")
 
-    # ── Current seat ──────────────────────────────────────────
+    #Current seat
     current_seat = "None"
     if status.get("success"):
         if status.get("checked_in_seat"):
@@ -104,7 +102,7 @@ def render_account_page(token):
     st.markdown(f"**Current seat:** {current_seat}")
     st.divider()
 
-    # ── Edit profile ──────────────────────────────────────────
+    #Edit profile
     st.subheader("Personal Information")
     gender_options = ["Female", "Male", "Prefer not to say"]
 
