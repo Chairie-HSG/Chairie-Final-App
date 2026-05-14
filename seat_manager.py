@@ -480,7 +480,12 @@ def _recheck_window_state(seat):
         "minutes_to_open":    None if window_open else max(0, (secs - RECHECK_WINDOW_MINUTES * 60) // 60),
     }
 
+ """
+    Releases the user's current occupied or reserved seat.
 
+    If the user was checked in, this also closes their active study session
+    and saves the session duration.
+"""
 def release_current_seat(token):
     if not SUPABASE_OK:
         return {"success": False, "message": "Supabase not configured."}
@@ -535,50 +540,33 @@ def release_current_seat(token):
         return {"success": False, "message": str(e)}
 
 
-# ─────────────────────────────────────────────────────────────
-# LUNCH BREAK  (daily 1-hour grace window, 11:00–14:00 Zurich)
-# ─────────────────────────────────────────────────────────────
-# Every checked-in user gets one 1-hour lunch break per day, claimable
-# at any moment in the 11:00–14:00 Zurich window. Once started, the
-# break runs for 60 min and is tracked in session state — both because
-# we don't want to add a new Supabase column for this, AND because the
-# break is primarily a UX construct: the only persistent effect is
-# bumping the seat's `occupied_until` forward by an hour so the
-# auto-expire job doesn't release the seat while the user is at lunch.
-LUNCH_BREAK_START_HOUR = 11   # inclusive (Zurich local)
-LUNCH_BREAK_END_HOUR   = 14   # exclusive — last claim at 13:59
-LUNCH_BREAK_MINUTES    = 60
+# LUNCH BREAK 
 
+LUNCH_BREAK_START_HOUR = 11   
+LUNCH_BREAK_END_HOUR   = 14  
+LUNCH_BREAK_MINUTES    = 60
+"""
+    Checks whether the current Zurich time is inside the lunch break window.
+    Every user gets a 1 hour period between 11am and 2 pm for lunch which then can claim at any time in this perido
+"""
 
 def _lunch_break_window_open():
-    """True if the wall clock (Zurich) is currently in the claim window."""
-    # ── DEMO OVERRIDE (Settings page) ───────────────────────────────
-    # `_demo_lunch_window_force` is set by the Settings demo controls
-    # to True/False to force the window open or closed regardless of
-    # the actual wall clock. None (the default) falls through to the
-    # real time check. REMOVE THIS BLOCK WHEN DEMO PAGE IS REMOVED.
+
     override = st.session_state.get("_demo_lunch_window_force")
     if override is not None:
         return bool(override)
-    # ── END DEMO OVERRIDE ───────────────────────────────────────────
     now = _zurich_now()
     return LUNCH_BREAK_START_HOUR <= now.hour < LUNCH_BREAK_END_HOUR
 
-
+ """
+    Returns the user's current lunch-break status.
+"""
 def _lunch_break_state():
-    """Return the current lunch-break state for the logged-in user.
-
-    Returns a dict with:
-      - window_open:    bool  — is it 11:00–14:00 right now?
-      - active:         bool  — is a break currently running?
-      - ends_at_iso:    str|None — when the break ends (UTC ISO)
-      - claimed_today:  bool  — has the user already used today's break?
-    """
+    
     window_open = _lunch_break_window_open()
     today_str   = _zurich_now().strftime("%Y-%m-%d")
 
-    # Persisted in session state. If the date stamp doesn't match
-    # today's Zurich date, the user is free to claim a fresh break.
+
     claimed_date  = st.session_state.get("lunch_break_claimed_date")
     claimed_today = (claimed_date == today_str)
 
