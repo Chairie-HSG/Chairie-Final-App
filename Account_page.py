@@ -77,16 +77,14 @@ def render_account_page(token):
     st.divider()
 
     # ── Study statistics ──────────────────────────────────────
-    # Three cards: weekly hours, all-time hours, and session count.
-    # If get_user_study_stats fails or returns None (e.g. Supabase
-    # is unreachable), the cards render with zeros — same fallback
-    # as the original "Hours Studied" tile.
     weekly_hours = (stats or {}).get("weekly_hours", 0)
-    total_hours  = (stats or {}).get("total_hours",  0)
-    sessions_n   = (stats or {}).get("sessions",     0)
+    total_hours = (stats or {}).get("total_hours", 0)
+    sessions_n = (stats or {}).get("sessions", 0)
     
     weekly_minutes = round(weekly_hours * 60)
     total_minutes = round(total_hours * 60)
+    
+    col1, col2, col3 = st.columns(3)
     
     col1.metric("Minutes this week", f"{weekly_minutes} min")
     col2.metric("Total minutes studied", f"{total_minutes} min")
