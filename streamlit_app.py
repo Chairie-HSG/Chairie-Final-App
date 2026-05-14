@@ -84,6 +84,22 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────
+# ACCOUNT PAGE  (rendered as the Profile tab)
+# Account_page.py is imported as-is — its render_account_page(token)
+# call is invoked from profile_page() below. Same graceful fallback
+# pattern as Support_page: if the module isn't importable (e.g. it
+# wasn't deployed alongside this file), the profile tab falls back
+# to a minimal placeholder so a missing module never breaks the app.
+# ─────────────────────────────────────────────────────────────
+try:
+    from Account_page import render_account_page
+    ACCOUNT_PAGE_AVAILABLE = True
+except Exception:
+    ACCOUNT_PAGE_AVAILABLE = False
+    render_account_page = None
+
+
+# ─────────────────────────────────────────────────────────────
 # VISUAL SHELL
 # ─────────────────────────────────────────────────────────────
 def _inject_app_styles():
@@ -96,8 +112,8 @@ def _inject_app_styles():
         st.markdown(css_part, unsafe_allow_html=True)
 
     # ── Add-on styles introduced *after* app_styles.html was authored ──
-    # Kept here so we don't have to touch the shared CSS file for small
-    # new components (lunch-break note, profile page tiles).
+    # Kept here so we don't have to touch the shared CSS file just for
+    # the lunch-break note added to the My Seat panel.
     st.markdown(
         """
         <style>
@@ -127,72 +143,6 @@ def _inject_app_styles():
             background: var(--bg-subtle);
             border-color: var(--border-soft);
             color: var(--text-secondary);
-          }
-
-          /* Profile page — avatar header */
-          .chairie-profile-header {
-            display: flex;
-            align-items: center;
-            gap: 18px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-soft);
-            border-radius: var(--radius-lg);
-            padding: 22px 24px;
-            box-shadow: var(--shadow-sm);
-            margin-bottom: 6px;
-          }
-          .chairie-profile-avatar {
-            width: 68px;
-            height: 68px;
-            border-radius: 50%;
-            background: var(--chairie-green-soft);
-            color: var(--chairie-green);
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 34px;
-            flex-shrink: 0;
-            border: 1px solid var(--border-soft);
-          }
-          .chairie-profile-name {
-            font-size: 22px;
-            font-weight: 800;
-            color: var(--text-primary);
-            letter-spacing: -0.01em;
-            line-height: 1.2;
-          }
-          .chairie-profile-email {
-            font-size: 13px;
-            color: var(--text-secondary);
-            margin-top: 4px;
-          }
-
-          /* Profile page — current seat chip inside the seat-info card */
-          .chairie-profile-seat-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 14px 18px;
-            background: var(--bg-card);
-            border: 1px solid var(--border-soft);
-            border-radius: var(--radius-md);
-            box-shadow: var(--shadow-xs);
-          }
-          .chairie-profile-seat-row .label {
-            font-size: 12px;
-            color: var(--text-tertiary);
-            font-weight: 700;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-          }
-          .chairie-profile-seat-row .value {
-            font-size: 15px;
-            font-weight: 700;
-            color: var(--text-primary);
-          }
-          .chairie-profile-seat-row .value.muted {
-            color: var(--text-tertiary);
-            font-weight: 500;
           }
         </style>
         """,
@@ -756,41 +706,6 @@ def start_lunch_break(token, seat_id):
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
-
-
-# ─────────────────────────────────────────────────────────────
-# PROFILE  (Account page logic — folded in from Account_page.py)
-# ─────────────────────────────────────────────────────────────
-def get_profile(token):
-    """Fetch the `profiles` row for the current user. Returns {} if
-    Supabase is unavailable or the row hasn't been created yet."""
-    if not SUPABASE_OK:
-        return {}
-    try:
-        email = _email_from_token(token)
-        if not email:
-            return {}
-        resp = supabase.table("profiles").select("*").eq("email", email).limit(1).execute()
-        return resp.data[0] if resp.data else {}
-    except Exception:
-        return {}
-
-
-def save_profile(token, full_name, gender):
-    """Upsert the user's profile row (email + full_name + gender)."""
-    if not SUPABASE_OK:
-        return False
-    try:
-        email = _email_from_token(token)
-        if not email:
-            return False
-        supabase.table("profiles").upsert(
-            {"email": email, "full_name": full_name, "gender": gender},
-            on_conflict="email",
-        ).execute()
-        return True
-    except Exception:
-        return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2240,167 +2155,34 @@ def get_user_study_stats(token):
         st.error(f"Stats error: {e}")
         return None
 # ─────────────────────────────────────────────────────────────
-# PROFILE PAGE  (Account info + study statistics, merged in-file)
+# PROFILE PAGE  (delegates to Account_page.render_account_page)
 # ─────────────────────────────────────────────────────────────
-# The page is composed of four blocks, all styled with the same
-# chairie-* design system used elsewhere in the app:
-#   1. Avatar header   — circular emoji avatar + name + email
-#   2. Current seat    — one-line summary of the user's active seat
-#                        (or a muted "No active seat" if they have none)
-#   3. Personal info   — editable form (full name + gender) saved to
-#                        the `profiles` Supabase table via save_profile()
-#   4. Study stats     — three KPI cards: this-week / total / sessions
-#
-# The Account_page.py file in the repo defined this view as its own
-# module that re-imported back into streamlit_app — which created a
-# circular import and split the page from the rest of the app's style
-# layer. Folding it in here removes both issues.
+# The actual account UI (avatar, profile form, study stats) lives in
+# Account_page.py — same modular pattern Support_page uses. We just
+# render the shared top bar here, then hand off to that module. If
+# Account_page.py wasn't deployed alongside this file, we fall back
+# to a minimal placeholder so the tab stays navigable.
 def profile_page(token):
     _render_top_bar("Profile")
 
-    # ── Pull everything we need up-front ─────────────────────────────
-    profile      = get_profile(token) or {}
-    status       = get_user_status(token) or {}
-    stats        = get_user_study_stats(token)
-    email        = st.session_state.get("username", "") or ""
-    full_name    = profile.get("full_name", "") or ""
-    gender       = profile.get("gender") or "Prefer not to say"
-
-    # Avatar emoji — same mapping the old Account_page used
-    avatar = {"Female": "👩", "Male": "👨"}.get(gender, "🧑")
-    display_name = full_name or email or "Your account"
-
-    # ── 1) Avatar header ─────────────────────────────────────────────
-    st.markdown(
-        f"""
-        <div class="chairie-profile-header">
-          <div class="chairie-profile-avatar">{avatar}</div>
-          <div>
-            <div class="chairie-profile-name">{display_name}</div>
-            <div class="chairie-profile-email">{email}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # ── 2) Current seat (one-line summary) ───────────────────────────
-    st.markdown(
-        '<div class="chairie-section-title">Current seat</div>',
-        unsafe_allow_html=True,
-    )
-    current_seat_label = "No active seat"
-    current_seat_muted = True
-    if status.get("success"):
-        if status.get("checked_in_seat"):
-            seat = status["checked_in_seat"]
-            current_seat_label = f"{seat['code']} · checked in"
-            current_seat_muted = False
-        elif status.get("reserved_seat"):
-            seat = status["reserved_seat"]
-            current_seat_label = f"{seat['code']} · reserved"
-            current_seat_muted = False
-
-    value_class = "value muted" if current_seat_muted else "value"
-    st.markdown(
-        f"""
-        <div class="chairie-profile-seat-row">
-          <span class="label">Where you're studying</span>
-          <span class="{value_class}">{current_seat_label}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # ── 3) Personal information (editable form) ──────────────────────
-    st.markdown(
-        '<div class="chairie-section-title">Personal information</div>',
-        unsafe_allow_html=True,
-    )
-    gender_options = ["Female", "Male", "Prefer not to say"]
-    try:
-        gender_index = gender_options.index(gender)
-    except ValueError:
-        gender_index = gender_options.index("Prefer not to say")
-
-    with st.form("profile_form", clear_on_submit=False):
-        new_name = st.text_input("Full name", value=full_name)
-        new_gender = st.selectbox(
-            "Gender",
-            gender_options,
-            index=gender_index,
-        )
-        save_clicked = st.form_submit_button("Save changes")
-        if save_clicked:
-            if save_profile(token, new_name, new_gender):
-                st.success("Profile saved.")
-                st.rerun()
-            else:
-                st.error(
-                    "Could not save. Make sure the `profiles` table "
-                    "exists in Supabase with `email`, `full_name`, "
-                    "and `gender` columns."
-                )
-
-    # ── 4) Study statistics (chairie-kpi tiles) ──────────────────────
-    st.markdown(
-        '<div class="chairie-section-title">Study statistics '
-        '<span class="hint">since you started using Chairie</span></div>',
-        unsafe_allow_html=True,
-    )
-    weekly_hours  = (stats or {}).get("weekly_hours", 0)
-    total_hours   = (stats or {}).get("total_hours",  0)
-    sessions_n    = (stats or {}).get("sessions",     0)
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    if not ACCOUNT_PAGE_AVAILABLE or render_account_page is None:
         st.markdown(
-            f"""
-            <div class="chairie-kpi">
-              <div class="chairie-kpi-icon green">⏱</div>
-              <div class="chairie-kpi-text">
-                <span class="chairie-kpi-num">{weekly_hours}h</span>
-                <span class="chairie-kpi-label">Hours this week</span>
+            """
+            <div class="chairie-placeholder">
+              <div class="chairie-placeholder-icon">👤</div>
+              <div class="chairie-placeholder-title">Account</div>
+              <div class="chairie-placeholder-sub">
+                The Account module (Account_page.py) is not available.
+                Place it next to this file to enable profile editing
+                and study statistics.
               </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-    with c2:
-        st.markdown(
-            f"""
-            <div class="chairie-kpi">
-              <div class="chairie-kpi-icon honey">∑</div>
-              <div class="chairie-kpi-text">
-                <span class="chairie-kpi-num">{total_hours}h</span>
-                <span class="chairie-kpi-label">Total study hours</span>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            f"""
-            <div class="chairie-kpi">
-              <div class="chairie-kpi-icon red">▦</div>
-              <div class="chairie-kpi-text">
-                <span class="chairie-kpi-num">{sessions_n}</span>
-                <span class="chairie-kpi-label">Study sessions</span>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        return
 
-    if not stats:
-        st.markdown(
-            '<div class="chairie-empty-detail" style="margin-top:12px;">'
-            'No study sessions yet — check into a seat to start tracking '
-            'your hours.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+    render_account_page(token)
 
 # ─────────────────────────────────────────────────────────────
 # SETTINGS PAGE  (placeholder for now)
