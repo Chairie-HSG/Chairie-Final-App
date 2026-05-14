@@ -1,20 +1,46 @@
 """
 streamlit_app.py
+================
 
 Frontend / UI layer for Chairie (HSG Seat Finder).
 
-This file is what Streamlit actually runs. It owns ONLY rendering:
-- Login + signup page
-- Sidebar navigation, shared top bar
-- Landing page (hero, KPI strip, per-floor stats, forecast charts)
-- Map page (interactive seat map, QR scan card, seat detail panel)
-- Profile page (delegates to Account_page.render_account_page)
-- Settings page (currently demo controls)
-- Support footer
+This file is what Streamlit actually runs — i.e. the entry point you
+launch with ``streamlit run streamlit_app.py``. It owns ONLY rendering
+and routing. The pages it draws are:
 
-All business logic — Supabase, seat reservation, lunch break,
-ML forecasting, countdown math, study stats — lives in
-`seat_manager.py` and is imported below.
+    - Login + signup page (shown when the user is not logged in)
+    - Sidebar navigation rail + shared top bar (shown on every
+      post-login page)
+    - "home" / landing page — hero card, KPI strip, per-floor stat
+      cards, "Today's forecast" Plotly charts
+    - "map" page — interactive Plotly seat map, QR-scan card, and a
+      seat-detail / reservation action panel
+    - "profile" page — delegates to ``Account_page.render_account_page``
+    - "settings" page — currently demo / debug controls for the
+      lunch-break and re-check-in features
+    - Support footer rendered at the bottom of every page
+
+Everything that is NOT rendering — Supabase access, authentication,
+seat reservation, the lunch-break state machine, ML occupancy
+forecasting, countdown math, and study statistics — lives in
+``seat_manager.py`` and is imported below. The companion modules
+``Account_page.py``, ``Support_page.py``, ``interactive_map.py``, and
+``qr_code.py`` are imported with a graceful try/except so the app
+still boots even if one of them (or its dependencies) is missing.
+
+High-level control flow
+-----------------------
+``main()``                               ── streamlit entry point
+   ├── ``st.set_page_config(...)``
+   ├── ``init_auth_state()``             ── seed session_state keys
+   └── if logged in → ``main_app()``     ── post-login router
+       else        → ``login_page()``    ── login / signup screen
+
+``main_app()`` injects the CSS, draws the sidebar, then dispatches
+to ``landing_page`` / ``map_page`` / ``profile_page`` / ``settings_page``
+based on ``st.session_state["current_page"]``. After the page body,
+the support footer is rendered and the JS countdown ticker is
+injected at the very bottom of the DOM.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -81,6 +107,13 @@ from seat_manager import (
 # INTERACTIVE MAP  (from interactive_map.py)
 # Graceful fallback: if the module or its deps are missing, the app
 # still runs with the legacy static-image + button-grid view.
+#
+# This try/except pattern is used by every optional helper module
+# (interactive_map, qr_code, Support_page, Account_page). The trick
+# is that we set a *_AVAILABLE flag based on whether the import
+# succeeded, and every call site checks the flag before using the
+# function. That means a single missing file or unmet pip dep never
+# crashes the app — it just degrades gracefully to a less rich UI.
 # ─────────────────────────────────────────────────────────────
 try:
     from interactive_map import (
@@ -93,6 +126,11 @@ except Exception:
     INTERACTIVE_MAP_AVAILABLE = False
 
     def clear_seat_selection(key=None):  # noqa: E306  (fallback no-op)
+        """Fallback for ``interactive_map.clear_seat_selection`` when the
+        interactive_map module failed to import. Tries to remove
+        ``?seat=…`` from the URL but never raises — logout / page
+        changes that depend on this helper must always succeed.
+        """
         try:
             if "seat" in st.query_params:
                 del st.query_params["seat"]
@@ -265,34 +303,73 @@ FLOOR_CONFIG = {
 # AUTH SESSION STATE  (UI-side login/logout bookkeeping)
 # ─────────────────────────────────────────────────────────────
 def init_auth_state():
+    """Seed ``st.session_state`` with the keys the rest of the app expects.
+
+    Streamlit reruns the entire script on every interaction, so we cannot
+    rely on module-level variables to remember anything. Anything that
+    must survive between reruns (the logged-in user, which page they are
+    on, which seat they clicked, etc.) lives in ``st.session_state``.
+
+    This function is called once from ``main()`` BEFORE any page renders.
+    It only writes a key if it is not already present, so a real value
+    set by ``login_user()`` etc. is never overwritten on subsequent reruns.
+
+    Keys seeded
+    -----------
+    logged_in           : bool   — True once the user has authenticated.
+    username            : str    — e-mail address shown in the top bar.
+    token               : str    — Supabase access token used by the backend.
+    selected_seat_id    : int    — id of the seat currently clicked on the map.
+    auth_mode           : str    — "login" or "signup" — which form is shown.
+    current_page        : str    — "home" | "map" | "profile" | "settings".
+                                   Defaults to "home" so users land on the
+                                   landing/marketing page right after login
+                                   and click through to the map themselves.
+    """
     defaults = {
         "logged_in": False,
         "username": None,
         "token": None,
         "selected_seat_id": None,
         "auth_mode": "login",
-        # Which page of the post-login app is currently visible.
-        # Possible values: "home", "map", "profile", "settings".
-        # Defaults to "home" so users land on the marketing/landing
-        # page right after login and click through to the map.
         "current_page": "home",
     }
+    # Only write keys that are not yet set — never clobber existing values.
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 
 def is_logged_in():
+    """Return ``True`` if the current session has an authenticated user.
+
+    Used as a router gate in ``main()`` to decide whether to draw the
+    login page or the post-login app shell.
+    """
     return st.session_state.get("logged_in", False)
 
 
 def login_user(username, token):
+    """Mark the session as authenticated.
+
+    Called by ``login_page()`` after ``login_request()`` (from
+    ``seat_manager.py``) returns a successful result. The ``token`` is
+    the Supabase access token; every backend call later in the session
+    will pass it through so Supabase can identify the user.
+    """
     st.session_state["logged_in"] = True
     st.session_state["username"] = username
     st.session_state["token"] = token
 
 
 def logout_user():
+    """Tear down all session state tied to the current user.
+
+    Called by the red "Logout" button in ``_render_top_bar()``. Resets
+    auth + selected seat + current page, drops any lunch-break or
+    demo state left over from this session, and clears the ``?seat=…``
+    query-string param so a fresh login starts on a clean URL.
+    """
     st.session_state["logged_in"] = False
     st.session_state["username"] = None
     st.session_state["token"] = None
@@ -300,9 +377,9 @@ def logout_user():
     # Reset the visible page so the next login starts on the landing page.
     st.session_state["current_page"] = "home"
     # Drop any in-progress lunch-break state. We keep these out of the
-    # `defaults` dict above because they're optional/transient — using
-    # .pop ensures a stale value from a previous session doesn't leak
-    # into the next user on the same browser.
+    # `defaults` dict in init_auth_state() because they're optional /
+    # transient — using .pop ensures a stale value from a previous
+    # session doesn't leak into the next user on the same browser.
     st.session_state.pop("lunch_break_active_until", None)
     st.session_state.pop("lunch_break_claimed_date", None)
     # DEMO BLOCK: also clear any demo override left over on this browser.
@@ -311,10 +388,20 @@ def logout_user():
     try:
         clear_seat_selection()
     except Exception:
+        # clear_seat_selection() reads st.query_params which can raise
+        # in some Streamlit versions / contexts — never crash logout
+        # over a URL-cleanup failure.
         pass
 
 
 def require_login():
+    """Guard a page from anonymous access.
+
+    Called at the top of ``main_app()``. If the user is not logged in we
+    show a warning and ``st.stop()`` to halt the rest of the script —
+    ``st.stop()`` raises an internal exception that Streamlit catches,
+    so no further widgets render on this run.
+    """
     if not is_logged_in():
         st.warning("Please log in first.")
         st.stop()
@@ -340,6 +427,13 @@ def live_countdown_html(iso_value):
 
 
 def seat_status_color(status):
+    """Map a seat status string to a CSS hex color.
+
+    Used by the LEGACY fallback view (static image + button grid) in
+    ``map_page()`` — the interactive Plotly map uses its own colour
+    palette defined in ``interactive_map.STATUS_COLORS``. Returns a
+    grey fallback for any unknown status (e.g. ``"maintenance"``).
+    """
     return {"free": "#1db954", "reserved": "#ff9800", "occupied": "#e53935"}.get(status, "#9ca3af")
 
 
@@ -1418,6 +1512,18 @@ def landing_page(token):
 # Account_page.py wasn't deployed alongside this file, we fall back
 # to a minimal placeholder so the tab stays navigable.
 def profile_page(token):
+    """Render the Profile tab.
+
+    All actual profile UI (avatar, full-name / gender form, study-stats
+    metrics, current-seat readout) lives in ``Account_page.py`` —
+    same modular pattern ``Support_page`` uses. This wrapper just
+    paints the shared top bar and hands off to that module.
+
+    If ``Account_page.py`` was not deployed alongside this file (the
+    import at the top of the module raised), ``ACCOUNT_PAGE_AVAILABLE``
+    is ``False`` and we render a minimal placeholder card so the tab
+    stays navigable.
+    """
     _render_top_bar("Profile")
 
     if not ACCOUNT_PAGE_AVAILABLE or render_account_page is None:
@@ -1816,7 +1922,11 @@ def map_page(token):
 
     if layout and layout.get("seats"):
         # ── INTERACTIVE MAP PATH ────────────────────────────────────────────
-        # Merge layout coordinates with live Supabase status by seat id.
+        # The layout JSON gives us each seat's pixel position on the floor
+        # plan image (x, y, size, id), but it has NO live status — that
+        # lives in Supabase. We merge the two by id so the dot at (x, y)
+        # gets coloured by the seat's current status.
+        #
         # After renumbering Supabase so its `id` values match the layout's
         # (Ground 1..189, Floor 1 190..496), this straight id lookup is
         # all that's needed. We index against ALL Supabase rows (not just
@@ -1830,6 +1940,7 @@ def map_page(token):
             try:
                 sid = int(layout_seat["id"])
             except (KeyError, TypeError, ValueError):
+                # Malformed/missing id in the layout JSON → skip this dot.
                 continue
             live = supabase_by_id.get(sid)
             merged_seats.append({
@@ -1838,6 +1949,8 @@ def map_page(token):
                 "y":      int(layout_seat.get("y", 0)),
                 "size":   int(layout_seat.get("size", 13)),
                 # Live status if Supabase knows this seat, else gray "maintenance".
+                # A seat showing as "maintenance" on the map typically means the
+                # row was deleted from Supabase but its layout entry still exists.
                 "status": (live or {}).get("status", "maintenance"),
             })
 
@@ -1847,6 +1960,11 @@ def map_page(token):
         # detail panel above the map can use the up-to-date selection on
         # the same rerun (no extra rerun needed). Per-floor key means each
         # floor's selection persists independently.
+        #
+        # Event shape from Streamlit's plotly_chart selection_mode="points":
+        #   { "selection": { "points": [{"customdata": [seat_id], ...}], ... }, ... }
+        # We stuff the seat id into customdata in interactive_map.py so we
+        # don't have to reverse-lookup by (x, y) here.
         map_key = floor_cfg["map_key"]
         chart_event = st.session_state.get(map_key)
         if isinstance(chart_event, dict):
@@ -1856,7 +1974,12 @@ def map_page(token):
                 cd = points[0].get("customdata")
                 if cd is not None:
                     try:
+                        # customdata can come back as a 1-element list OR a
+                        # bare value depending on Plotly version — handle both.
                         clicked_id = int(cd[0] if isinstance(cd, (list, tuple)) else cd)
+                        # Only update state if the user actually clicked a
+                        # different seat — avoids an unnecessary rerun
+                        # cascade when the same event replays.
                         if clicked_id != st.session_state.get("selected_seat_id"):
                             st.session_state["selected_seat_id"] = clicked_id
                     except (TypeError, ValueError):
@@ -2009,6 +2132,36 @@ def _render_support_footer():
 
 
 def main_app():
+    """Render the post-login app shell and dispatch to the current page.
+
+    Called from ``main()`` when ``is_logged_in()`` returns True. Order
+    of operations is important and intentional:
+
+      1. ``require_login()``       — block the page if somehow not auth'd.
+      2. ``st_autorefresh(60_000)`` — pick up server-side seat changes
+                                      every minute (countdowns are NOT
+                                      driven by this — they tick client-
+                                      side every second via JS).
+      3. ``_inject_app_styles()``  — CSS must land BEFORE any element
+                                      renders, or the page flashes
+                                      unstyled.
+      4. ``_render_sidebar()``     — the left nav rail (visible on every
+                                      page).
+      5. occupancy snapshot        — every 30 min we persist a row in
+                                      ``occupancy_snapshots`` so the ML
+                                      forecast model has training data.
+      6. dispatch                  — look up the current page key in
+                                      ``PAGE_ROUTES`` and call its
+                                      renderer. Each renderer draws
+                                      its own top bar.
+      7. support footer            — Support_page section at the very
+                                      bottom of every page.
+      8. ``_inject_app_script()``  — JS ticker for the live countdowns.
+                                      Injected LAST so its zero-height
+                                      iframe wrapper sits below the
+                                      visible content rather than
+                                      pushing the sticky top bar down.
+    """
     require_login()
 
     # Auto-refresh every 60 seconds — only purpose now is to pick up
@@ -2026,10 +2179,14 @@ def main_app():
 
     token = st.session_state["token"]
 
+    # ── Persist an occupancy snapshot every 30 minutes ─────────────
+    # The ML forecast needs historical data points. We record one row
+    # per (floor, timestamp) into Supabase at most every 1800 s. Using
+    # session_state to throttle means each browser tab only writes at
+    # most twice an hour — many concurrent users still produce one
+    # row per interval, which is plenty.
     last_snapshot = st.session_state.get("last_snapshot_time")
-
     now = dt.now(timezone.utc)
-
     if not last_snapshot or (now - last_snapshot).total_seconds() > 1800:
         save_real_occupancy_snapshot()
         st.session_state["last_snapshot_time"] = now
@@ -2062,6 +2219,13 @@ def main_app():
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 def main():
+    """Streamlit entry point — called by ``streamlit run streamlit_app.py``.
+
+    Configures the page (title, wide layout, expanded sidebar), seeds
+    the session-state defaults, checks that Supabase secrets were
+    configured, and finally hands off to either ``main_app()`` (post-
+    login app shell) or ``login_page()`` based on the auth flag.
+    """
     st.set_page_config(
         page_title="HSG Study Spots",
         layout="wide",
@@ -2073,6 +2237,10 @@ def main():
     init_auth_state()
 
     if not SUPABASE_OK:
+        # SUPABASE_OK is False when neither st.secrets nor .env supplied
+        # SUPABASE_URL + SUPABASE_KEY. We still render whatever follows
+        # (login page or main app) so the developer can SEE the error
+        # in the running app rather than a blank screen.
         st.error(
             "⚠️ Supabase is not configured. "
             "Add SUPABASE_URL and SUPABASE_KEY to your Streamlit secrets or .env file."
@@ -2085,4 +2253,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # Streamlit imports this file as a module and runs the script
+    # top-to-bottom, so this guard is only really hit if someone runs
+    # `python streamlit_app.py` directly — in which case main() still
+    # works (it just won't render anything outside a Streamlit server).
     main()
