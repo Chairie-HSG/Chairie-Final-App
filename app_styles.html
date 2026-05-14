@@ -994,45 +994,43 @@
 
   /* ────────────────────────────────────────────────────────────
      SUPPORT FOOTER
-     The Support & Contact section appears at the bottom of every
-     page (rendered via Support_page.render_support_page()). These
-     rules style the divider above it and tone down the big
-     st.title("Support & Contact") H1 so it feels like a footer
-     section header instead of competing with the page's own title.
-     Scoped under .chairie-support-divider's general sibling so it
-     ONLY affects the support section, not other H1s on the page.
+     This section styles the Support & Contact area at the bottom of the app.
+
+     The support section appears on every post-login page.
+     The divider visually separates the maing page content from the support footer.
      ────────────────────────────────────────────────────────────*/
   .chairie-support-divider {
-    border: none;
-    border-top: 1px solid var(--border-soft);
-    margin: 48px 0 24px 0;
+    border: none; /*removes default horizontal line styling*/
+    border-top: 1px solid var(--border-soft); /*adds a soft top border as visible divider*/
+    margin: 48px 0 24px 0; /*Adds spacing above and below the divider*/
   }
-  /* Tone down the H1 — the "Support & Contact" title — so it reads
-     as a footer section header. Same for subheaders + dividers. */
+  /* Tone down the H1 (the "Support & Contact" title) so it reads
+     as a footer section header. Same for subheaders and dividers. */
   .chairie-support-divider ~ .stElementContainer h1,
   .chairie-support-divider ~ div h1 {
     font-size: 1.4rem !important;
     color: var(--text-strong);
-    margin-top: 0;
-    margin-bottom: 8px;
+    margin-top: 0; /*removes extra space above the footer title*/
+    margin-bottom: 8px; /*adds a little space below the footer title*/
   }
   .chairie-support-divider ~ .stElementContainer h2,
   .chairie-support-divider ~ div h2,
   .chairie-support-divider ~ .stElementContainer h3,
-  .chairie-support-divider ~ div h3 {
+  .chairie-support-divider ~ div h3 { /*meaning styling all headers that appear AFTER the support divider, that is what the ~ is for*/
     font-size: 1.05rem !important;
-    color: var(--text-secondary);
-    margin-top: 18px;
-    margin-bottom: 6px;
+    color: var(--text-secondary); /*using secondary text color so the subheadings feel less dominant*/
+    margin-top: 18px; /*adds spacing above each support subsection*/
+    margin-bottom: 6px; /*adds small spacing below each support subsection title*/
   }
 
   /* ────────────────────────────────────────────────────────────
      LIVE COUNTDOWN
-     Python renders <span class="chairie-countdown" data-target="ISO">
-     and the JS at the bottom of this file ticks every second.
-     Monospace + tabular numerals so digits don't shift width.
+     This styles the countdown timers rendered by Python.
+     JS is used so it will be updated every second. 
+     Java Script is used because it needs instant browser-side interaction
+     without rerunning Python every second.
      ────────────────────────────────────────────────────────────*/
-  .chairie-countdown {
+  .chairie-countdown { /*ensures that numbers take equal width so that the countdown doesn't jump around*/
     font-variant-numeric: tabular-nums;
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-weight: 700;
@@ -1040,29 +1038,27 @@
     background: var(--chairie-green-soft);
     padding: 2px 8px;
     border-radius: 6px;
-    display: inline-block;
+    display: inline-block; /*behave like text on the outside, like a box on the inside*/
     min-width: 56px;
     text-align: center;
   }
-  /* When the surrounding alert is warning/danger, the pill tints to match */
+  /* When the surrounding alert is warning/danger, the pill tints to match (turns yellow) */
   .chairie-alert-warning .chairie-countdown {
     color: #8a5a00;
     background: var(--chairie-honey-soft);
   }
-  .chairie-alert-error .chairie-countdown {
+  .chairie-alert-error .chairie-countdown { /*If countdown appears inside an error alert, it turns red*/
     color: var(--chairie-red);
     background: var(--chairie-red-soft);
   }
 
   /* ────────────────────────────────────────────────────────────
      CUSTOM ALERT BOXES
-     Used instead of st.warning / st.success / st.error so the
-     message body can include the live <span class="chairie-countdown">.
-     Streamlit's native alerts render their content as plain text,
-     which would freeze the countdown.
+     Custom alert boxes instead of Streamlit's built-in st.warning, st.success and st.error.
+     Because the default elements of Streamlit treat HTML as a text, so the live countdown would not update properly inside them.
      ────────────────────────────────────────────────────────────*/
-  .chairie-alert {
-    display: flex;
+  .chairie-alert { 
+    display: flex; /*places icon/message content next to each other*/
     align-items: center;
     gap: 12px;
     padding: 12px 16px;
@@ -1096,55 +1092,25 @@
 
 <!-- SCRIPT -->
 <!--
-  Everything below the SCRIPT marker is JavaScript injected via
-  st.components.v1.html() (from streamlit_app.py:_inject_app_shell).
-  It reaches into the parent DOM through window.parent.document
-  because Streamlit's main page and components live at the same
-  origin. The script:
-
-    1. Clears any previous interval left over from a Streamlit rerun
-       (otherwise every refresh would stack a new 1-second ticker).
-    2. Reads every <span class="chairie-countdown" data-target="ISO">
-       and computes the remaining time relative to Date.now().
-    3. Repaints the text every second — purely client side, so the
-       countdown never freezes between Streamlit reruns.
+  Everything below the SCRIPT marker is JavaScript injected.
+  It does two main things:
+  1. Adds mobile pinch-zoom support for Plotly maps,
+  so you can zoom out and into the map.
+  2. Updates live countdown timers every second. 
 -->
 <script>
 (function () {
-  const parentWin = window.parent;
-  const doc       = parentWin.document;
+  const parentWin = window.parent; /*get access to the parent streamlit window*/
+  const doc       = parentWin.document; /*get access to the parent streamlit html documen*/
 
   // ─────────────────────────────────────────────────────────────
   // MOBILE PINCH-ZOOM ON PLOTLY CHARTS
   // ─────────────────────────────────────────────────────────────
-  // Plotly.js does NOT implement pinch-zoom for 2D cartesian
-  // charts (its `scrollZoom` config only covers the mouse wheel
-  // on these chart types — pinch is built in only for mapbox /
-  // geo / gl3d). So we install our own handler:
-  //
-  //   1. Listen for `touchstart` on the parent document in the
-  //      CAPTURE phase, before Plotly's own listeners run.
-  //   2. When two fingers land on a `.js-plotly-plot`, freeze
-  //      Plotly's pan (via stopPropagation) and record:
-  //         - the initial finger distance
-  //         - the pinch midpoint in chart-data coordinates
-  //   3. On `touchmove`, compute scale = initDist / newDist and
-  //      build new x/y axis ranges scaled around the midpoint.
-  //   4. Schedule a Plotly.relayout via requestAnimationFrame so
-  //      we never do more than one redraw per frame.
-  //   5. On `touchend` (back to fewer than 2 touches), drop state.
-  //
-  // Desktop is untouched: this only installs when innerWidth ≤ 768.
-  // One-finger drag and seat-tap still flow to Plotly normally
-  // because we only block events when two fingers are down.
-  //
-  // Debug: <body data-chairie-pinch="..."> on the parent doc:
-  //   "installed" → handler attached
-  //   "active"    → mid-pinch
-  //   "idle"      → pinch ended
-  //   "no-plotly" → couldn't reach Plotly.relayout (see fallback note)
-  // ─────────────────────────────────────────────────────────────
-  function installMobilePinchZoom() {
+  
+   /**
+    * Installs custom pinch-zoom behaviour for Plotly charts on mobile (mouse-wheel and two-finger)
+    * */
+  function installMobilePinchZoom() { /*only with mobile-sized screens*/
     if (parentWin.innerWidth > 768) return;
     if (parentWin.__chairiePinchInstalled) return;
     parentWin.__chairiePinchInstalled = true;
@@ -1348,22 +1314,27 @@
   // ─────────────────────────────────────────────────────────────
   // LIVE COUNTDOWN TICKER
   // ─────────────────────────────────────────────────────────────
-  if (parentWin.__chairieCountdownInterval) {
+  if (parentWin.__chairieCountdownInterval) { /*if old countdown interval exists from a previous Streamlit rerun, remove it*/
     clearInterval(parentWin.__chairieCountdownInterval);
   }
+  /**Updates every countdown timer on the page.
+   * It finds all elements with class "chairie-countdown"
+   * reads their data-target timestamp, calculates the remaining time, 
+   * and write the result as minutes:seconds
+   * */
   function tick() {
-    const els = doc.querySelectorAll(".chairie-countdown[data-target]");
-    const now = Date.now();
-    els.forEach(function (el) {
+    const els = doc.querySelectorAll(".chairie-countdown[data-target]"); /*this finds all countdown elements that have a target time*/
+    const now = Date.now(); /*get the current time in milliseconds*/
+    els.forEach(function (el) { /*update each countdown element*/
       const target = Date.parse(el.dataset.target);
       if (isNaN(target)) return;
-      let secs = Math.max(0, Math.floor((target - now) / 1000));
-      const mm = String(Math.floor(secs / 60)).padStart(2, "0");
-      const ss = String(secs % 60).padStart(2, "0");
-      el.textContent = mm + ":" + ss;
+      let secs = Math.max(0, Math.floor((target - now) / 1000)); /*this calculates seconds remaining, never going below 0*/
+      const mm = String(Math.floor(secs / 60)).padStart(2, "0"); /*calculates remaining full minutes*/
+      const ss = String(secs % 60).padStart(2, "0"); /*calculates remaining seconds*/
+      el.textContent = mm + ":" + ss; /*writing the countdown text into the element*/
     });
   }
-  tick();
-  parentWin.__chairieCountdownInterval = setInterval(tick, 1000);
+  tick(); /*run immediately so the timer appears without waiting one second*/
+  parentWin.__chairieCountdownInterval = setInterval(tick, 1000); /*run countdown update every second*/
 })();
 </script>
