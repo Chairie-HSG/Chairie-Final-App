@@ -3,16 +3,8 @@ Interactive Map of the Bib with the use of Plotly
 
 Makes each real life seat a clickable green dot.
 
-Plotly handles the UI
-    - Hover tooltips on individual dots (showing seat number + status,
-      tinted with the seat's status colour).
-    - Mouse-wheel zoom on desktop, pinch-zoom on mobile.
-    - Drag-to-pan.
-    - Click events delivered back to Streamlit via on_select="rerun".
-
-Dependencies in requirements:
-    plotly
-    pillow
+Plotly draws the map, gives hover labels / zooming and detects the clicks
+Map is made with an image of the floor + a JSON file that stores x/y positions of the seats.
 """
 
 import json
@@ -41,8 +33,7 @@ _IMAGE_CANDIDATES = [
     "library_gfloor.png",
 ]
 
-# Both "available" (static JSON export) and "free" (Supabase status name)
-# count as the green/bookable state.
+#check status to assign color
 STATUS_COLORS: Dict[str, str] = {
     "available":   "#1db954",
     "free":        "#1db954",
@@ -51,15 +42,16 @@ STATUS_COLORS: Dict[str, str] = {
     "maintenance": "#9ca3af",
 }
 
-DEFAULT_DOT_COLOR = "#9ca3af"
+DEFAULT_DOT_COLOR = "#9ca3af" #case of error
 
 
 # ---------------------------------------------------------------------------
 # File discovery
 # ---------------------------------------------------------------------------
 
+"
 def _find_file(candidates: List[str], custom_path: Optional[str] = None) -> Optional[str]:
-    """Return the first existing path: explicit > script dir > cwd."""
+
     if custom_path and os.path.exists(custom_path):
         return os.path.abspath(custom_path)
     here = os.path.dirname(os.path.abspath(__file__))
