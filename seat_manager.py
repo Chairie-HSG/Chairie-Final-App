@@ -57,7 +57,7 @@ ZURICH_TZ = ZoneInfo("Europe/Zurich")
 
 
 # TIME HELPERS
- """
+"""
     Returns the current time in UTC to store it & use it for time calculations, and later convert it in Zurich timezone
 """
 def _now(): 
