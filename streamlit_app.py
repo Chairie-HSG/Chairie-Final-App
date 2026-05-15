@@ -1,29 +1,27 @@
-"""
-streamlit_app.py
-
-This is the main file for our Chairie app. We run it with:
-    streamlit run streamlit_app.py
-
-Chairie helps students at the HSG library find and book a free seat.
-This file handles all the screens the user sees:
-
-    - Login and signup page
-    - Sidebar menu and the top bar (shown on every page after login)
-    - Home page with the library stats and a forecast chart
-    - Map page where you click a seat to reserve it and scan its QR code
-    - Profile page (the code is in Account_page.py)
-    - Settings page (placeholder for now, real settings coming later)
-    - Support section at the bottom of every page
-
-The functions that actually talk to the database (Supabase), do the
-machine learning, and calculate the countdowns are in seat_manager.py.
-We just import them here and call them.
-
-How the app starts:
-    main()  ->  checks if the user is logged in
-                if YES  ->  main_app()   shows the sidebar and the page
-                if NO   ->  login_page() shows the login form
-"""
+# streamlit_app.py
+#
+# This is the main file for our Chairie app. We run it with:
+#     streamlit run streamlit_app.py
+#
+# Chairie helps students at the HSG library find and book a free seat.
+# This file handles all the screens the user sees:
+#
+#     - Login and signup page
+#     - Sidebar menu and the top bar (shown on every page after login)
+#     - Home page with the library stats and a forecast chart
+#     - Map page where you click a seat to reserve it and scan its QR code
+#     - Profile page (the code is in Account_page.py)
+#     - Settings page (placeholder for now, real settings coming later)
+#     - Support section at the bottom of every page
+#
+# The functions that actually talk to the database (Supabase), do the
+# machine learning, and calculate the countdowns are in seat_manager.py.
+# We just import them here and call them.
+#
+# How the app starts:
+#     main()  ->  checks if the user is logged in
+#                 if YES  ->  main_app()   shows the sidebar and the page
+#                 if NO   ->  login_page() shows the login form
 
 # ============================================================
 # NOTE ABOUT AI USE
