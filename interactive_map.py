@@ -141,7 +141,7 @@ def render_interactive_map(
     show_diagnostics: bool = False,
     key: str = "library_map_chart",
 ) -> Optional[Dict]:
-     """
+    """
     Draws the full map using Plotly.
     We used AI to help us utilize Plotly as we had to adopt a new library very quickly
 
