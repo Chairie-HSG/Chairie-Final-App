@@ -4,6 +4,7 @@
 #     streamlit run streamlit_app.py
 #
 # Chairie helps students at the HSG library find and book a free seat.
+
 # This file handles all the screens the user sees:
 #
 #     - Login and signup page
@@ -14,34 +15,25 @@
 #     - Settings page (placeholder for now, real settings coming later)
 #     - Support section at the bottom of every page
 #
-# The functions that actually talk to the database (Supabase), do the
-# machine learning, and calculate the countdowns are in seat_manager.py.
-# We just import them here and call them.
-#
-# How the app starts:
-#     main()  ->  checks if the user is logged in
-#                 if YES  ->  main_app()   shows the sidebar and the page
-#                 if NO   ->  login_page() shows the login form
+# The functions that actually talk to the database (Supabase), do the machine learning, 
+# and calculate the countdowns are in seat_manager.py.
 
-# ============================================================
+# We just import them here and call them.
+
+# -------------------------------------------------------------------------------------
 # NOTE ABOUT AI USE
-# ============================================================
-# While building this app we used Claude (an AI assistant from
-# Anthropic) as a tutor. Most of the time we asked Claude things
-# like "which library should we use for X" or "why is our QR
-# scanner not picking up a second photo", and Claude pointed us
-# in the right direction. We then wrote the code ourselves.
+# -------------------------------------------------------------------------------------
+# While building this app we used Claude as a tutor. Most of the time we asked Claude things
+# like "which library should we use for X" or "why is our QR scanner not picking up a second photo", 
+# and Claude pointed us in the right direction. We then wrote the code ourselves.
 #
-# There are a few places where the specific solution is something
-# we would not have figured out on our own. Those places have a
-# comment that starts with "# AI HELP:" and a short note about
-# what Claude told us.
+# There are a few places where the specific solution is something we would not have figured out on our own. 
+# Those places have a comment that starts with "AI HELP" and a short note about what Claude helped us with.
 #
-# Honest note: we did not keep careful notes while coding, so the
-# line between "we wrote it after Claude's advice" and "Claude
-# basically gave us this" is not always clear. The AI HELP tags
-# are our best guess of where Claude's help was the most specific.
-# ============================================================
+# Other note: we did not keep careful notes while coding, so the line between "we wrote it after Claude's advice" 
+# and "Claude basically gave us this" is not always clear. 
+# The AI HELP tags are our best guess of where Claude's help was the most specific.
+# -------------------------------------------------------------------------------------
 
 # ─────────────────────────────────────────────────────────────
 # IMPORTS
@@ -59,8 +51,7 @@ import plotly.graph_objects as go
 # ─────────────────────────────────────────────────────────────
 # IMPORTS FROM seat_manager.py
 # ─────────────────────────────────────────────────────────────
-# seat_manager.py is the file with all the database stuff and
-# the logic. This file (streamlit_app.py) is for the screens.
+# seat_manager.py is the file with all the database stuff and the logic. This file (streamlit_app.py) is for the screens.
 from seat_manager import (
     # Constants (numbers we use in many places)
     RESERVATION_MINUTES,
@@ -129,16 +120,15 @@ from Account_page import render_account_page
 # ─────────────────────────────────────────────────────────────
 # STYLES AND JAVASCRIPT
 # ─────────────────────────────────────────────────────────────
-# The CSS and JavaScript for the app are saved in app_styles.html.
-# We split that file in two parts at the "<!-- SCRIPT -->" line:
+# The CSS and JavaScript for the app are saved in app styles html file. We split that file in two parts 
+# at the SCRIPT line:
 #   - the top part is CSS
-#   - the bottom part is JavaScript (for the live countdowns)
+#   - the bottom part is JavaScript (for the live seconds countdowns)
 #
-# AI HELP: Claude told us that st.markdown does not allow <script>
-# tags, so we have to use st.components.v1.html for the JavaScript.
-# It also told us to put the JS at the bottom of the page so it
-# doesn't push the top bar down. Without Claude we probably would
-# have used st_autorefresh every second, which made the page blink.
+# AI HELP: Claude told us that st.markdown does not allow script tags, so we have to use st.components.v1.html 
+# for the JavaScript. It also instructed us to put the JS at the bottom of the page so it
+# doesn't push the top bar down. Without Claude we probably would have used st_autorefresh every second, 
+# which made the page blink repeatedly.
 
 def _inject_app_styles():
     """Add the CSS to the page. We call this at the top of every page
@@ -147,8 +137,7 @@ def _inject_app_styles():
     if css_part:
         st.markdown(css_part, unsafe_allow_html=True)
 
-    # Extra CSS for the lunch-break note. We added this later, so
-    # instead of changing app_styles.html we just put it here.
+    # Extra CSS for the lunch break note. We added this later, so instead of changing +app style file we just put it here.
     st.markdown(
         """
         <style>
@@ -216,18 +205,17 @@ def _read_app_shell_parts():
 # ─────────────────────────────────────────────────────────────
 # CONFIGURATION FOR EACH FLOOR
 # ─────────────────────────────────────────────────────────────
+
 # For each floor we save:
-#   - json_path:          the file with the seat positions
-#                         (None means we use the default file)
-#   - image_filename:     the floor plan picture
-#   - layout_canvas_size: the size (width, height) of the picture
-#                         we used when we made the JSON file. We
-#                         need this so the dots match the chairs.
-#   - show_diagnostics:   we set this to True only when we are
-#                         placing the dots, normally it is False.
-#   - map_key:            a unique name for each floor's map.
-#                         Streamlit needs this so the two floors
-#                         don't get mixed up.
+
+# - json_path:          the file with the seat positions (None means we use the default file)
+# - image_filename:     the floor plan picture
+# - layout_canvas_size: the size (width, height) of the picture we used when we made the JSON file. We
+#                        need this so the dots match the chairs.
+# - show_diagnostics:   we set this to True only when we are placing the dots, normally it is False.
+# - map_key:           a unique name for each floors map. Streamlit needs this so the two floors
+#                        don't get mixed up.
+
 FLOOR_CONFIG = {
     "Ground Floor": {
         "json_path":          None,
@@ -249,9 +237,8 @@ FLOOR_CONFIG = {
 # ─────────────────────────────────────────────────────────────
 # LOGIN STATUS (saved in session state)
 # ─────────────────────────────────────────────────────────────
-# Streamlit runs the whole script again every time the user clicks
-# something. So normal variables forget their values. We use
-# st.session_state to remember things between clicks.
+# Streamlit runs the whole script again every time the user clicks something. 
+# So normal variables forget their values. We use st.session_state to remember things between clicks.
 
 def init_auth_state():
     """Create the keys in session_state that we use everywhere.
@@ -292,8 +279,7 @@ def logout_user():
     st.session_state["selected_seat_id"] = None
     # Go back to the home page for next time.
     st.session_state["current_page"] = "home"
-    # Also clear the lunch break info from this session so it does not
-    # show up for the next user on the same browser.
+    # Also clear the lunch break info from this session so it does not show up for the next user on the same browser.
     st.session_state.pop("lunch_break_active_until", None)
     st.session_state.pop("lunch_break_claimed_date", None)
     # Remove ?seat=... from the URL so the next user starts clean.
@@ -317,12 +303,10 @@ def require_login():
 # SMALL HELPER FUNCTIONS FOR DISPLAY
 # ─────────────────────────────────────────────────────────────
 
-# AI HELP: this function works with the JavaScript in app_styles.html.
-# We make an HTML span tag with the end time inside. The JavaScript
-# finds these spans every second and updates the number. This way the
-# countdown does not freeze when Streamlit reruns the page. Our first
-# version used st_autorefresh(1000) which made the whole page blink
-# every second. Claude told us to use this approach instead.
+# AI HELP: this function works with the JavaScript in app_styles.html. We make an HTML span tag with the end time inside. 
+# The JavaScript finds these spans every second and updates the number. This way the countdown does not freeze 
+# when Streamlit reruns the page. Claude helped us with understanding and using Javascript.
+
 def live_countdown_html(iso_value):
     """Returns an HTML span that shows a countdown. The JavaScript in
     app_styles.html updates the number every second."""
@@ -494,7 +478,8 @@ def login_page():
             unsafe_allow_html=True,
         )
 
-    # Getting the current authentication mode from Streamlit's session state and if no mode exists yet, the page starts in login mode
+    # Getting the current authentication mode from Streamlit's session state and if no mode exists yet, 
+    # the page starts in login mode
     mode = st.session_state.get("auth_mode", "login")
 
     # If the current mode is login, show the login title and subtitle
@@ -591,7 +576,7 @@ def login_page():
 # ─────────────────────────────────────────────────────────────
 
 def _render_lunch_break_block(seat, token, key_prefix=""):
-    """Shows the lunch break section inside the "My Seat" card.
+    """Shows the lunch break section inside the My Seat's card.
 
     There are 4 different things we can show:
       - the user is on a lunch break right now -> show countdown
@@ -599,9 +584,9 @@ def _render_lunch_break_block(seat, token, key_prefix=""):
       - the user can take a break now -> show the button
       - it is too early or too late -> show when the break is open
 
-    We only show this when the user is checked in (status = occupied).
-    A reservation only lasts 10 minutes, so a break there does not
-    make sense. key_prefix is so the button gets a unique name."""
+    We only show this when the user is checked in (status = occupied). A reservation only lasts 10 minutes, 
+    so a break there does not make sense. key prefix is so the button gets a unique name."""
+    
     if not seat or seat.get("status") != "occupied" or not seat.get("occupied_by_me"):
         return
 
@@ -662,16 +647,17 @@ def _render_lunch_break_block(seat, token, key_prefix=""):
 
 
 def _render_my_seat_panel(seat, token, key_prefix=""):
-    """Shows the "Your seat" card at the top of the Home and Map pages.
+    """Shows the "your seat" card at the top of the Home and Map pages. 
+    
     We only show it when the user has a reserved or occupied seat.
 
     The card shows:
-      - a small title ("Your seat · checked in" or "Your seat · reserved")
+      - a small title ("Your seat is checked in" or "Your seat is reserved")
       - seat details (code, building, floor, status, countdown)
       - the lunch break section (only when checked in)
       - a button to release the seat or cancel the reservation
 
-    key_prefix makes the button names unique in case this card appears
+    key prefix makes the button names unique in case this card appears
     on more than one page at the same time."""
     if not seat:
         return
@@ -693,9 +679,9 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
     # Make the countdown row.
     # - If occupied: show the countdown until they have to re-check in.
     # - If reserved: show the 10-min countdown to check in.
-    # When the user is on a lunch break we hide this countdown because
-    # otherwise the same number shows up twice on the screen (once here
-    # and once in the lunch break block).
+    
+    # When the user is on a lunch break we hide this countdown because otherwise the same number shows up 
+    # twice on the screen (once here and once in the lunch break block).
     countdown_row_html = ""
     on_lunch_break = is_occupied and _lunch_break_state()["active"]
     if not on_lunch_break:
@@ -747,9 +733,8 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
     # Lunch break section (only shows something when checked in)
     _render_lunch_break_block(seat, token, key_prefix=key_prefix)
 
-    # Re-check in hint. We show this only when the user is checked in,
-    # is NOT on a lunch break, and is in the last 30 minutes of their
-    # 2-hour slot. We put it here next to the QR scan button so the
+    # Recheck in hint. We show this only when the user is checked in, is not on a lunch break, 
+    # and is in the last 30 minutes of their 2 hour slot. We put it here next to the QR scan button so the
     # user sees the connection: "scan to extend my seat".
     if is_occupied and not _lunch_break_state()["active"]:
         rs = _recheck_window_state(seat)
@@ -762,7 +747,7 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
                 unsafe_allow_html=True,
             )
 
-    # Primary action: release a checked-in seat, or cancel a reservation
+    # Primary action: release a checked in seat, or cancel a reservation
     if is_occupied:
         if st.button(
             "Release seat",
@@ -773,7 +758,7 @@ def _render_my_seat_panel(seat, token, key_prefix=""):
             result = release_current_seat(token)
             if result.get("success"):
                 st.success(result["message"])
-                # Clear lunch break state too, they no longer have a seat.
+                # Clear lunch break state too, they no longer have a sat.
                 st.session_state.pop("lunch_break_active_until", None)
                 st.rerun()
             else:
@@ -910,7 +895,7 @@ def _go_to(page):
     """Helper to change to a different page when the user clicks
     a sidebar button or the email at the top."""
     st.session_state["current_page"] = page
-    # If we are leaving the map page, forget the seat the user clicked.
+    # If we are leaving the map page, forget the seat the user clicked. 
     # Otherwise it would still be selected when they come back.
     if page != "map":
         st.session_state["selected_seat_id"] = None
@@ -964,8 +949,10 @@ def _render_sidebar():
 
 def _render_top_bar(page_label):
     """Shows the top bar on every page after login.
+    
     On the left: the logo + Chairie name + page name.
     On the right: the user's email and a Logout button.
+    
     Clicking the email opens the profile page (the professor said
     we should make this work)."""
     # We put the bar in a container with a CSS class so we can style it.
@@ -1015,15 +1002,12 @@ def _render_top_bar(page_label):
 # HOME PAGE (the page the user sees after login)
 # ─────────────────────────────────────────────────────────────
 # The home page has these parts from top to bottom:
-#   1) Green hero card with the slogan and a "Find a Seat" button
-#      that takes the user to the map.
-#   2) Three small cards: free seats now, floors we have, time of
-#      the last update.
-#   3) One card per floor with: how many seats are free out of the
-#      total, a progress bar (green / honey yellow / red depending
-#      on how full it is), and a tag (Open / Busy / Full).
-#   4) One forecast bar chart per floor that shows the predicted
-#      occupancy by hour, made with the machine learning model.
+#   1) Green hero card with the slogan and a "Find a Seat" button that takes the user to the map.
+#   2) Three small cards: free seats now, floors we have, time of the last update.
+#   3) One card per floor with: how many seats are free out of the total, 
+#      a progress bar (green/yellow/red, depending on how full it is), and a tag (Open/Busy/Full).
+#   4) One forecast bar chart per floor that shows the predicte the occupancy by hour, 
+#      made with the machine learning model.
 
 def _render_forecast_chart(floor_choice, floor_stats):
     """Shows the forecast bar chart for one floor. The bar for the
@@ -1039,9 +1023,8 @@ def _render_forecast_chart(floor_choice, floor_stats):
     hours      = [h for h, _ in series]
     occupancy  = [pct for _, pct in series]
 
-    # Find what hour it is now in Zurich. If it is before or after
-    # opening hours we still highlight the first or last bar so the
-    # chart never has zero highlighted bars.
+    # Find what hour it is now in Zurich. If it is before or after opening hours we still 
+    # highlight the first or last bar so the chart never has zero highlighted bars.
     now_hour = _zurich_now().hour
     if now_hour < hours[0]:
         now_hour = hours[0]
@@ -1144,21 +1127,18 @@ def _render_floor_stat_card(floor_choice, floor_stats):
 # ─────────────────────────────────────────────────────────────
 # QR SCAN CARD (on the map page)
 # ─────────────────────────────────────────────────────────────
-# This card lets the user scan a QR code with their camera, or
-# type the seat code by hand. The function decode_qr() comes from
-# qr_code.py, and the function _resolve_scanned_code() (which
-# decides what to do with the code) is in seat_manager.py.
+# This card lets the user scan a QR code with their camera, or type the seat code by hand. 
+# The function decode comes from qr_code file, and the function _resolve_scanned_code() (which
+# decides what to do with the code) is in seat manager file.
 
 def _render_qr_scan_card(token, seats, reserved_seat):
     """Shows the "Scan QR" card. The camera does NOT turn on until
     the user clicks the button, so it does not run all the time."""
     # AI HELP: Claude told us two things for this function:
-    # 1) We have to keep st.camera_input hidden behind a button.
-    #    Otherwise the camera light stays on, which is creepy.
-    # 2) We have to change the key of the camera every time the
-    #    user takes a new picture. Without this, Streamlit keeps
-    #    the old photo and the user cannot scan a second time.
-    #    We had this bug for a while before Claude told us.
+    # 1) We have to keep st.camera_input hidden behind a button. Otherwise the camera light stays on, which is less than optimal.
+    # 2) We have to change the key of the camera every time the user takes a new picture. Without this, Streamlit keeps
+    #    the old photo and the user cannot scan a second time. 
+
     ss = st.session_state
     # Set the default values once.
     ss.setdefault("qr_scanner_open", False)   # is the camera shown?
@@ -1225,8 +1205,7 @@ def _render_qr_scan_card(token, seats, reserved_seat):
     )
 
     if photo is not None:
-        from PIL import Image  # we import this here so the app does not
-                               # crash if PIL is not installed and the
+        from PIL import Image  # we import this here so the app does not crash if PIL is not installed and the
                                # camera is never used
         image     = Image.open(photo).convert("RGB")
         qr_string = decode_qr(image)
@@ -1267,9 +1246,8 @@ def landing_page(token):
         unsafe_allow_html=True,
     )
 
-    # The "Find a Seat" button is a real Streamlit button so it can
-    # change the page. We put it inside a container with a special
-    # key so the CSS file can colour just this button honey-yellow.
+    # The find a seat button is a real Streamlit button so it can change the page. 
+    # We put it inside a container with a special key so the CSS file can color just this button yellow.
     with st.container(key="chairie_hero_cta"):
         cta_col, _ = st.columns([2, 6])
         with cta_col:
@@ -1284,8 +1262,7 @@ def landing_page(token):
         return
     seats = seats_result["seats"]
 
-    # If the user has a seat (reserved or occupied), show the
-    # "Your seat" card here so they can see it right away.
+    # If the user has a seat (reserved or occupied), show the "your seat" card here so they can see it right away.
     my_seat = next(
         (s for s in seats if s.get("occupied_by_me") or s.get("reserved_by_me")),
         None,
@@ -1378,9 +1355,9 @@ def landing_page(token):
 # ─────────────────────────────────────────────────────────────
 # PROFILE PAGE
 # ─────────────────────────────────────────────────────────────
-# The real profile page (avatar, name, study stats) is in
-# Account_page.py. This function just draws the top bar and then
+# The real profile page (avatar, name, study stats) is in Account_page.py. This function just draws the top bar and then
 # calls render_account_page() from that file.
+
 def profile_page(token):
     """Shows the Profile page. We just draw the top bar and then
     call the function from Account_page.py."""
@@ -1391,8 +1368,7 @@ def profile_page(token):
 # ─────────────────────────────────────────────────────────────
 # SETTINGS PAGE
 # ─────────────────────────────────────────────────────────────
-# Placeholder for now. Notifications, appearance, and account
-# controls will be added here later.
+# Placeholder for now. Notifications, appearance, and account controls will be added here later.
 def settings_page(token):
     """Shows the Settings page. Right now this is just a placeholder
     until we add the real settings (notifications, appearance, account)."""
@@ -1427,8 +1403,7 @@ def map_page(token):
         reserved_seat   = status_result.get("reserved_seat")
         checked_in_seat = status_result.get("checked_in_seat")
 
-        # If the user reserved a seat but did NOT check in yet, show
-        # a yellow alert with the countdown. They have 10 minutes to
+        # If the user reserved a seat but did NOT check in yet, show a yellow alert with the countdown. They have 10 minutes to
         # scan the QR code.
         if reserved_seat and not checked_in_seat:
             st.markdown(
@@ -1468,10 +1443,10 @@ def map_page(token):
             label_visibility="visible",
         )
 
-    # Count how many seats are free on the selected floor. We use
-    # _seat_belongs_to_floor() because the floor is stored differently
-    # in different rows (sometimes as text, sometimes as a number),
+    # Count how many seats are free on the selected floor. We use _seat_belongs_to_floor() 
+    # because the floor is stored differently in different rows (sometimes as text, sometimes as a number),
     # and this function handles all the cases.
+    
     floor_seats = [s for s in seats if _seat_belongs_to_floor(s, floor_choice)]
     free_count  = sum(1 for s in floor_seats if s["status"] == "free")
 
@@ -1512,8 +1487,7 @@ def map_page(token):
 
     st.markdown("<div style='margin-bottom: 14px;'></div>", unsafe_allow_html=True)
 
-    # Show the map. If we have a JSON file for the floor, we show the
-    # clickable Plotly map. If not, we show the old version (just a
+    # Show the map. If we have a JSON file for the floor, we show the clickable Plotly map. If not, we show the old version (just a
     # picture + a list of buttons).
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1530,16 +1504,12 @@ def map_page(token):
             layout = load_layout_data(silent=True)
 
     if layout and layout.get("seats"):
-        # The JSON file tells us where each seat is on the picture
-        # (x, y, size, id), but the JSON does NOT have the live
-        # status (free, reserved, occupied). The live status comes
-        # from Supabase. So we have to combine the two by the seat
-        # id, so each dot has the right position AND the right colour.
+        # The JSON file tells us where each seat is on the picture (x, y, size, id), but the JSON does NOT have the live
+        # status (free, reserved, occupied). The live status comes from Supabase. So we have to combine the two by the seat
+        # id, so each dot has the right position AND the right colur.
         #
-        # We give every seat in the database a unique id. Ground floor
-        # uses 1 to 189 and Floor 1 uses 190 to 496. The ranges do not
-        # overlap, so we can just match by id without worrying about
-        # which floor we are on.
+        # We give every seat in the database a unique id. Ground floor uses 1 to 189 and Floor 1 uses 190 to 496. 
+        # The ranges do not overlap, so we can just match by id without worrying about which floor we are on.
         supabase_by_id = {int(s["id"]): s for s in seats}
 
         merged_seats = []
@@ -1555,25 +1525,18 @@ def map_page(token):
                 "x":      int(layout_seat.get("x", 0)),
                 "y":      int(layout_seat.get("y", 0)),
                 "size":   int(layout_seat.get("size", 13)),
-                # If Supabase knows the seat, use its status (free / reserved /
-                # occupied). If not, show "maintenance" (a grey dot). This
-                # usually means the seat was deleted from Supabase but the
-                # JSON file still has it.
+                # If Supabase knows the seat, use its status (free/reserved/occupied). If not, show grey for maintenance. This
+                # usually means the seat was deleted from Supabase but the JSON file still has it.
                 "status": (live or {}).get("status", "maintenance"),
             })
 
         # Click handling.
-        # AI HELP: we asked Claude how to know which dot the user
-        # clicked on the Plotly map. It told us that Streamlit saves
-        # the click event in st.session_state under the same name as
-        # the chart, and that we have to read it BEFORE drawing the
-        # chart, so the seat info above the map updates on the same
-        # click. Without Claude we would have made one "Select" button
-        # for every seat (which is what the old version of the map
+        # AI HELP: we asked Claude how to know which dot the user clicked on the Plotly map. It told us that Streamlit saves
+        # the click event in st.session_state under the same name as the chart, and that we have to read it before drawing the
+        # chart, so the seat info above the map updates on the same click. 
+        # Without Claude we would have made one "Select" button for every seat (which is what the old version of the map
         # below still does).
         #
-        # The event looks like this:
-        #   { "selection": { "points": [{"customdata": [seat_id], ...}], ... }, ... }
         # We put the seat id in customdata in interactive_map.py so
         # we don't have to look it up by (x, y).
         map_key = floor_cfg["map_key"]
@@ -1585,11 +1548,9 @@ def map_page(token):
                 cd = points[0].get("customdata")
                 if cd is not None:
                     try:
-                        # customdata is sometimes a list and sometimes
-                        # a single number, depending on the Plotly version
+                        # customdata is sometimes a list and sometimes a single number, depending on the Plotly version
                         clicked_id = int(cd[0] if isinstance(cd, (list, tuple)) else cd)
-                        # Only update if the user clicked a different seat,
-                        # so the page does not reload for no reason.
+                        # Only update if the user clicked a different seat, so the page does not reload for no reason.
                         if clicked_id != st.session_state.get("selected_seat_id"):
                             st.session_state["selected_seat_id"] = clicked_id
                     except (TypeError, ValueError):
@@ -1598,7 +1559,7 @@ def map_page(token):
         # ── Seat detail panel ABOVE the map ─────────────────────────────
         _render_seat_detail_panel(seats, token)
 
-        # ── Map header + interactive map ────────────────────────────────
+        # ── Map header and interactive map ────────────────────────────────
         st.markdown(
             f"""
             <div class="chairie-section-title">
@@ -1619,8 +1580,7 @@ def map_page(token):
         )
 
     else:
-        # Old version of the map: a picture and a list of buttons.
-        # We keep this in case the JSON file is missing.
+        # Old version of the map: a picture and a list of buttons. We keep this in case the JSON file is missing.
         img_map = {
             "Ground Floor": os.path.join(BASE_DIR, "Library_GFloor.jpg"),
             "Floor 1":      os.path.join(BASE_DIR, "Library_1Floor.jpg"),
@@ -1692,16 +1652,14 @@ def map_page(token):
                     if st.button("Select", key=f"sel_{seat['id']}"):
                         st.session_state["selected_seat_id"] = seat["id"]
 
-        # In the old map version, we show the seat details at the
-        # bottom, because the user clicks a button from the list above.
+        # In the old map version, we show the seat details at the bottom, because the user clicks a button from the list above.
         _render_seat_detail_panel(seats, token)
 
 
 # ─────────────────────────────────────────────────────────────
 # PAGE ROUTER
 # ─────────────────────────────────────────────────────────────
-# This is how we know which page to open. The function main_app()
-# below reads st.session_state["current_page"] and uses this
+# This is how we know which page to open. The function main_app (below reads st.session_state["current_page"] and uses this
 # dictionary to find the right function to call.
 
 PAGE_ROUTES = {
@@ -1713,8 +1671,7 @@ PAGE_ROUTES = {
 
 
 def _render_support_footer():
-    """Shows the support section at the bottom of every page.
-    The actual support content is in Support_page.py."""
+    """Shows the support section at the bottom of every page. The actual support content is in support page file."""
     # A thin line to separate the support section from the page.
     st.markdown(
         '<hr class="chairie-support-divider" />',
@@ -1724,26 +1681,23 @@ def _render_support_footer():
 
 
 def main_app():
-    """This is the main function we run after the user is logged in.
-    It does the things every page needs (sidebar, styles, refresh)
-    and then opens the page the user is currently on.
+    """This is the main function we run after the user is logged in. It does the things every page needs 
+    (sidebar, styles, refresh) and then opens the page the user is currently on.
 
     The order is important:
       1. Check the user is logged in
-      2. Refresh the page every 60 seconds so we see changes from
-         other users
+      2. Refresh the page every 60 seconds so we see changes from other users
       3. Add the CSS at the top (so the styles work)
       4. Draw the sidebar
       5. Save a snapshot of the seats every 30 minutes (for ML)
-      6. Draw the current page (home / map / profile / settings)
+      6. Draw the current page (home/map/profile/settings)
       7. Draw the support section at the bottom
       8. Add the JavaScript at the bottom (for the live countdowns)
     """
     require_login()
 
-    # Refresh the page every 60 seconds so we see when other users
-    # reserve or release a seat. The countdowns do NOT depend on this,
-    # they update every second by themselves with JavaScript.
+    # Refresh the page every 60 seconds so we see when other users reserve or release a seat. 
+    # The countdowns do NOT depend on this, they update every second by themselves with JavaScript.
     st_autorefresh(interval=60000, key="seat_refresh")
 
     # Add the CSS FIRST so all styles are ready before the page draws.
@@ -1754,10 +1708,8 @@ def main_app():
 
     token = st.session_state["token"]
 
-    # Save a snapshot of the current seat occupancy to the database.
-    # We only do it if 30 minutes (1800 seconds) passed since the last
-    # one, otherwise we would save too many rows. The machine learning
-    # model uses these rows to make the forecast.
+    # Save a snapshot of the current seat occupancy to the database. We only do it if 30 minutes (1800 seconds) passed since the last
+    # one, otherwise we would save too many rows. The machine learning model uses these rows to make the forecast.
     last_snapshot = st.session_state.get("last_snapshot_time")
     now = dt.now(timezone.utc)
     if not last_snapshot or (now - last_snapshot).total_seconds() > 1800:
@@ -1786,20 +1738,17 @@ def main_app():
 # ENTRY POINT
 # ─────────────────────────────────────────────────────────────
 def main():
-    """The first function that runs when we start the app.
-    It sets the page title, prepares session state, and then
+    """The first function that runs when we start the app. It sets the page title, prepares session state, and then
     shows the login page or the main app depending on the user."""
     st.set_page_config(
         page_title="HSG Study Spots",
         layout="wide",
-        # We want the sidebar open by default. Otherwise the user has
-        # to click a small arrow to find the menu.
+        # We want the sidebar open by default. Otherwise the user has to click a small arrow to find the menu.
         initial_sidebar_state="expanded",
     )
     init_auth_state()
 
-    # If Supabase is not set up correctly, show a red error message.
-    # The app still runs so we can see the error during testing.
+    # If Supabase is not set up correctly, show a red error message. The app still runs so we can see the error during testing.
     if not SUPABASE_OK:
         st.error(
             "⚠️ Supabase is not configured. "
@@ -1812,7 +1761,6 @@ def main():
         login_page()
 
 
-# This is how Python runs the file: only call main() if this file
-# is the one we started with.
+# This is how Python runs the file: only call main() if this file is the one we started with.
 if __name__ == "__main__":
     main()
