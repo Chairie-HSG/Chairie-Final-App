@@ -817,7 +817,7 @@ def _ml_forecast_series(floor_choice):
 
 
 def save_real_occupancy_snapshot():
-     """
+    """
     Saves the current seat occupancy into the historical snapshot table.
 
     These snapshots become the training data for the ML forecast. So at first it will use fake data and overtime start using real user data.
@@ -859,7 +859,7 @@ def save_real_occupancy_snapshot():
 
 
 # Personal Profile Data stats, that are displayed in the profile section
- """
+"""
     Calculates study statistics for the logged-in user.
 
     It reads completed study sessions and returns weekly hours,
@@ -915,7 +915,7 @@ def get_user_study_stats(token):
 
 
 # QR-SCAN RESOLUTION 
- """
+"""
     Decides what should happen when a QR code is scanned.
     It receives the scanned seat code and decides whether the user
     can check in, re-check in, or should see an error message.
