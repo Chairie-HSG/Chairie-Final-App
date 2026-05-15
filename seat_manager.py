@@ -97,7 +97,7 @@ def _email_from_token(token):
         return None
     return user.email
 
- """
+"""
     Tries to log a user in with Supabase's authentification system
 
     Returns the user's email and access token if the account exists & the logins are correct
@@ -117,7 +117,7 @@ def login_request(email, password):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
- """
+"""
     Creates a new Supabase auth user using Supabase's authentification system
 """
 def signup_request(email, password):
@@ -133,7 +133,7 @@ def signup_request(email, password):
 
 
 # COUNTDOWN HELPERS  
- """
+"""
     Calculates how many seconds are left until the stored target time.
 """
 def seconds_left(iso_value):
@@ -222,7 +222,7 @@ def get_seats(token=None):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
- """
+"""
     Checks if the current user already has reserved or check in a seat, in which case we return it and the user cannot reserve another seat
 
 """
@@ -274,7 +274,7 @@ def get_user_status(token=None):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
- """
+"""
     Reserves a free seat for the logged-in user.
     
 """
@@ -344,7 +344,7 @@ def cancel_reservation(token):
         return {"success": True, "message": "Reservation cancelled."}
     except Exception as e:
         return {"success": False, "message": str(e)}
- """
+"""
     Checks the user into a seat after scanning or entering its QR code.
 
 """
@@ -401,7 +401,7 @@ def check_in_from_qr(token, seat_id):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
- """
+"""
     Extends the user's current check-in timer by scanning their own seat again.
 
     Only works if the user already occupies a seat, hasnt released it yet (manually or automatically
@@ -459,7 +459,7 @@ def recheck_in_from_qr(token, seat_id):
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
- """
+"""
     Checks whether the user's current seat is inside the re-check-in window.
 """
 
@@ -480,7 +480,7 @@ def _recheck_window_state(seat):
         "minutes_to_open":    None if window_open else max(0, (secs - RECHECK_WINDOW_MINUTES * 60) // 60),
     }
 
- """
+"""
     Releases the user's current occupied or reserved seat.
 
     If the user was checked in, this also closes their active study session
@@ -558,7 +558,7 @@ def _lunch_break_window_open():
     now = _zurich_now()
     return LUNCH_BREAK_START_HOUR <= now.hour < LUNCH_BREAK_END_HOUR
 
- """
+"""
     Returns the user's current lunch-break status.
 """
 def _lunch_break_state():
